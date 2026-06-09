@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +11,7 @@ from qiskit.providers import BackendV2
 from qiskit.providers.exceptions import QiskitBackendNotFoundError
 
 from .backend import QubexBackend
+from .device_topology import qid_to_label
 from .estimator import QubexEstimatorV2
 from .executor import QubexPulseExecutor
 from .sampler import QubexSamplerV2
@@ -107,17 +108,30 @@ class QubexProvider:
         experiment: Any,
         *,
         name: str = "qubex",
+        device_topology: str | Path | Mapping[str, Any] | None = None,
+        qubit_labels: Sequence[str] | None = None,
         execute_options: dict[str, Any] | None = None,
         **backend_options: Any,
     ) -> "QubexProvider":
         """Create a provider from an already configured Qubex Experiment."""
+        topology = (
+            _load_device_topology(device_topology)
+            if device_topology is not None
+            else None
+        )
+        executor_qubit_labels = (
+            tuple(str(label) for label in qubit_labels)
+            if qubit_labels is not None
+            else _device_topology_qubit_labels(topology)
+        )
         executor = QubexPulseExecutor(
             experiment,
+            qubit_labels=executor_qubit_labels,
             execute_options=execute_options,
         )
         backend_options.setdefault("dt", executor.dt_seconds())
         return cls(
-            experiment,
+            topology or experiment,
             name=name,
             executor=executor,
             instruction_durations=executor.instruction_durations_seconds(),
@@ -131,7 +145,9 @@ class QubexProvider:
         name: str = "qubex",
         system_id: str | None = None,
         chip_id: str | None = None,
-        qubits: Iterable[str | int],
+        qubits: Iterable[str | int] | None = None,
+        device_topology: str | Path | Mapping[str, Any] | None = None,
+        qubit_labels: Sequence[str] | None = None,
         connect_devices: bool = False,
         execute_options: dict[str, Any] | None = None,
         **experiment_options: Any,
@@ -147,10 +163,26 @@ class QubexProvider:
             raise ImportError(
                 "QubexProvider.from_experiment_config requires qubex to be installed."
             ) from exc
+        topology = (
+            _load_device_topology(device_topology)
+            if device_topology is not None
+            else None
+        )
+        topology_qubit_labels = _device_topology_qubit_labels(topology)
+        resolved_qubits = (
+            list(qubits)
+            if qubits is not None
+            else list(qubit_labels or topology_qubit_labels or ())
+        )
+        if not resolved_qubits:
+            raise ValueError(
+                "qubits must be supplied unless device_topology or qubit_labels "
+                "can provide the Qubex qubit order."
+            )
         experiment = Experiment(
             system_id=system_id,
             chip_id=chip_id,
-            qubits=list(qubits),
+            qubits=resolved_qubits,
             **experiment_options,
         )
         if connect_devices:
@@ -158,6 +190,8 @@ class QubexProvider:
         return cls.from_experiment(
             experiment,
             name=name,
+            device_topology=topology,
+            qubit_labels=qubit_labels or topology_qubit_labels,
             execute_options=execute_options,
         )
 
@@ -169,3 +203,31 @@ def _load_device_topology(
         return device_topology
     path = Path(device_topology)
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _device_topology_qubit_labels(
+    device_topology: Mapping[str, Any] | None,
+) -> tuple[str, ...] | None:
+    if device_topology is None:
+        return None
+    qubits = device_topology.get("qubits")
+    if not isinstance(qubits, list):
+        return None
+    physical_ids = [
+        int(qubit.get("physical_id", qubit.get("id", index)))
+        for index, qubit in enumerate(qubits)
+        if isinstance(qubit, Mapping)
+    ]
+    label_width_qubits = max(physical_ids, default=len(qubits) - 1) + 1
+    labels = []
+    for index, qubit in enumerate(qubits):
+        if not isinstance(qubit, Mapping):
+            labels.append(qid_to_label(index, len(qubits)))
+            continue
+        label = qubit.get("label")
+        if label is not None:
+            labels.append(str(label))
+            continue
+        physical_id = int(qubit.get("physical_id", qubit.get("id", index)))
+        labels.append(qid_to_label(physical_id, label_width_qubits))
+    return tuple(labels)

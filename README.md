@@ -101,7 +101,10 @@ exp = Experiment(
 )
 exp.connect()
 
-provider = QubexProvider.from_experiment(exp)
+provider = QubexProvider.from_experiment(
+    exp,
+    device_topology="device-topology.json",
+)
 backend = provider.get_backend()
 
 circuit = QuantumCircuit(2, 2)
@@ -114,11 +117,14 @@ job = backend.run(transpiled, shots=1024)
 counts = job.result().get_counts()
 ```
 
-`from_experiment(...)` is the recommended production path. It injects the
-configured Qubex `Experiment` into `QubexPulseExecutor`, infers calibrated gate
-durations from `Experiment.pulse`, and exposes those durations plus the Qubex
-sampling period as the Qiskit `Target`. That lets Qiskit scheduling passes use
-the same timing grid as Qubex:
+`from_experiment(...)` is the recommended production path. Pass
+`device_topology=...` when available: the topology file supplies the Qiskit
+`Target` constraints for transpilation and scheduling, while the configured
+Qubex `Experiment` supplies pulse generation, frame tracking, measurement, and
+hardware execution. The executor infers calibrated pulse durations from
+`Experiment.pulse` and exposes those durations plus the Qubex sampling period
+to Qiskit. That lets Qiskit scheduling passes use the same timing grid as
+Qubex:
 
 ```python
 scheduled = transpile(circuit, backend, scheduling_method="asap")
@@ -139,12 +145,18 @@ connection is opt-in:
 ```python
 provider = QubexProvider.from_experiment_config(
     system_id="64Q-HF-Q1",
-    qubits=["Q00", "Q01"],
+    device_topology="device-topology.json",
     config_dir="...",
     params_dir="...",
     connect_devices=True,
 )
 ```
+
+When `device_topology` is supplied to `from_experiment_config(...)`, `qubits`
+can be omitted and will be inferred from the topology's physical qubit order.
+For unusual label widths, for example a subset of a 100+ qubit system, pass
+`qubit_labels=[...]` explicitly so Qiskit physical qubit indices map to the
+intended Qubex labels.
 
 A bare Qubex `Measurement` object is not enough for gate-level Qiskit circuits,
 because the executor needs the calibrated pulse methods provided by
