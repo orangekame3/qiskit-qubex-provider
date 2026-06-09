@@ -110,6 +110,9 @@ class DurationSchedule:
     def barrier(self, labels=None):
         self.ops.append(("barrier", labels))
 
+    def is_valid(self):
+        return True
+
 
 class DurationBlank(DurationObject):
     def __init__(self, duration: float):
@@ -925,6 +928,26 @@ def test_qubex_executor_allows_multiplexed_readout_resource_windows() -> None:
             return SimpleNamespace(channel=channel)
 
     QubexPulseExecutor(FakeExperiment())._validate_resource_constraints(FakeSchedule())
+
+
+def test_qubex_executor_rejects_invalid_native_pulse_schedule(monkeypatch) -> None:
+    class InvalidSchedule(DurationSchedule):
+        def is_valid(self):
+            return False
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: InvalidSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(1)
+    circuit.x(0)
+
+    with pytest.raises(ValueError, match="Invalid Qubex pulse schedule"):
+        QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
 
 
 def test_transpile_scheduling_uses_qubex_target_durations() -> None:
