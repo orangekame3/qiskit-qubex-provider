@@ -125,6 +125,7 @@ class QubexProvider:
         device_topology: str | Path | Mapping[str, Any] | None = None,
         qubit_labels: Sequence[str] | None = None,
         execute_options: dict[str, Any] | None = None,
+        timing_policy: str = "qiskit",
         native: bool = False,
         **backend_options: Any,
     ) -> "QubexProvider":
@@ -143,6 +144,7 @@ class QubexProvider:
             experiment,
             qubit_labels=executor_qubit_labels,
             execute_options=execute_options,
+            timing_policy=timing_policy,
         )
         backend_options.setdefault("dt", executor.dt_seconds())
         return cls(
@@ -169,6 +171,7 @@ class QubexProvider:
         native: bool = False,
         connect_devices: bool = False,
         execute_options: dict[str, Any] | None = None,
+        timing_policy: str = "qiskit",
         **experiment_options: Any,
     ) -> "QubexProvider":
         """Create a Qubex Experiment and wrap it in a provider.
@@ -215,6 +218,7 @@ class QubexProvider:
             basis_gates=basis_gates,
             native=native,
             execute_options=execute_options,
+            timing_policy=timing_policy,
         )
 
 
