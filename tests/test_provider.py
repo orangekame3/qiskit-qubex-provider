@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from math import pi
 from types import SimpleNamespace
 
@@ -572,6 +573,150 @@ def test_provider_from_experiment_populates_target_durations() -> None:
     assert backend.target["rz"][(0,)].duration == 0.0
 
 
+def test_provider_from_experiment_can_use_device_topology_target() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+        dt = 2e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    topology = {
+        "name": "topology-device",
+        "qubits": [
+            {
+                "id": 0,
+                "physical_id": 5,
+                "qubit_lifetime": {"t1": 25.0, "t2": 30.0},
+                "gate_duration": {"sx": 16, "x": 24},
+            },
+            {
+                "id": 1,
+                "physical_id": 7,
+                "qubit_lifetime": {"t1": 20.0, "t2": 22.0},
+                "gate_duration": {"sx": 18, "x": 26},
+            },
+        ],
+        "couplings": [
+            {"control": 0, "target": 1, "gate_duration": {"rzx90": 272}},
+        ],
+    }
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        device_topology=topology,
+    ).get_backend()
+
+    assert backend.qubex is topology
+    assert backend.target.num_qubits == 2
+    assert backend.target.qubit_properties[0].t1 == pytest.approx(25e-6)
+    assert (0, 1) in backend.target["cx"]
+    assert (1, 0) not in backend.target["cx"]
+    assert backend.target["sx"][(0,)].duration == pytest.approx(4e-9)
+    assert backend._executor.qubit_labels == ("Q05", "Q07")
+
+
+def test_provider_from_experiment_allows_explicit_topology_qubit_labels() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    topology = {
+        "qubits": [
+            {"id": 0, "physical_id": 7},
+            {"id": 1, "physical_id": 42},
+        ],
+        "couplings": [
+            {"control": 0, "target": 1, "gate_duration": {"rzx90": 272}},
+        ],
+    }
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        device_topology=topology,
+        qubit_labels=("Q007", "Q042"),
+    ).get_backend()
+
+    assert backend._executor.qubit_labels == ("Q007", "Q042")
+    assert backend.target.num_qubits == 2
+
+
+def test_provider_from_experiment_config_infers_qubits_from_topology(monkeypatch) -> None:
+    created = {}
+
+    class FakeExperiment:
+        dt = 1e-9
+
+        def __init__(self, *, system_id, chip_id, qubits, **options):
+            created["system_id"] = system_id
+            created["chip_id"] = chip_id
+            created["qubits"] = qubits
+            created["options"] = options
+            self.qubit_labels = tuple(qubits)
+            self.pulse = DurationPulse()
+            self.measurement_service = SimpleNamespace(execute=lambda **kwargs: None)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "qubex",
+        SimpleNamespace(Experiment=FakeExperiment),
+    )
+    topology = {
+        "qubits": [
+            {"id": 0, "physical_id": 5},
+            {"id": 1, "physical_id": 7},
+        ],
+        "couplings": [
+            {"control": 0, "target": 1, "gate_duration": {"rzx90": 272}},
+        ],
+    }
+
+    backend = QubexProvider.from_experiment_config(
+        system_id="system",
+        chip_id="chip",
+        device_topology=topology,
+        config_dir="config",
+    ).get_backend()
+
+    assert created["qubits"] == ["Q05", "Q07"]
+    assert created["options"] == {"config_dir": "config"}
+    assert backend.qubex is topology
+    assert backend._executor.qubit_labels == ("Q05", "Q07")
+
+
+def test_provider_from_experiment_config_keeps_experiment_label_inference(monkeypatch) -> None:
+    class FakeExperiment:
+        dt = 1e-9
+
+        def __init__(self, *, system_id, chip_id, qubits, **options):
+            self.qubit_labels = ("Q00", "Q01")
+            self.pulse = DurationPulse()
+            self.measurement_service = SimpleNamespace(execute=lambda **kwargs: None)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "qubex",
+        SimpleNamespace(Experiment=FakeExperiment),
+    )
+
+    backend = QubexProvider.from_experiment_config(
+        system_id="system",
+        qubits=[0, 1],
+    ).get_backend()
+
+    assert backend._executor.qubit_labels == ("Q00", "Q01")
+
+
 def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0", "Q1")
@@ -752,6 +897,30 @@ def test_qubex_executor_allows_non_overlapping_hardware_resource_windows() -> No
 
         def get_target(self, label):
             channel = SimpleNamespace(id="shared-control")
+            return SimpleNamespace(channel=channel)
+
+    QubexPulseExecutor(FakeExperiment())._validate_resource_constraints(FakeSchedule())
+
+
+def test_qubex_executor_allows_multiplexed_readout_resource_windows() -> None:
+    class FakeSchedule:
+        def get_pulse_ranges(self):
+            return {
+                "RQ0": [range(0, 10)],
+                "RQ1": [range(0, 10)],
+            }
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+        def resolve_read_label(self, target, allow_legacy=False):
+            return f"R{target}"
+
+        def get_read_out_target(self, label):
+            channel = SimpleNamespace(id="shared-readout")
             return SimpleNamespace(channel=channel)
 
     QubexPulseExecutor(FakeExperiment())._validate_resource_constraints(FakeSchedule())

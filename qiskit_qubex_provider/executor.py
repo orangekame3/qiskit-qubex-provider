@@ -420,6 +420,8 @@ class QubexPulseExecutor:
             return
         resource_windows: dict[str, list[tuple[int, int, str]]] = {}
         for label, ranges in get_pulse_ranges().items():
+            if self._is_readout_label(label):
+                continue
             resource_key = self._resource_key(label)
             if resource_key is None:
                 continue
@@ -455,6 +457,11 @@ class QubexPulseExecutor:
         if port_id is not None and number is not None:
             return f"{port_id}:{number}"
         return None
+
+    def _is_readout_label(self, label: str) -> bool:
+        if label in {self._readout_label(qubit_label) for qubit_label in self._qubit_labels}:
+            return True
+        return label.startswith("R") and label[1:] in self._qubit_labels
 
     def _target_metadata(self, label: str) -> Any | None:
         for source in (
