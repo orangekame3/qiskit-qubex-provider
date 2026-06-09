@@ -88,6 +88,15 @@ def _infer_qubit_labels(
     if qubex is None:
         raise ValueError("num_qubits is required when no Qubex source is provided.")
 
+    qubit_labels = _get_attr_chain(
+        qubex,
+        ("qubit_labels",),
+        ("ctx", "qubit_labels"),
+        ("context", "qubit_labels"),
+    )
+    if qubit_labels is not None:
+        return [str(label) for label in qubit_labels]
+
     qubits = _get_attr_chain(
         qubex,
         ("qubits",),
@@ -109,6 +118,8 @@ def _infer_qubit_properties(
     qubits = _get_attr_chain(
         qubex,
         ("qubits",),
+        ("ctx", "qubits"),
+        ("context", "qubits"),
         ("quantum_system", "qubits"),
         ("chip", "qubits"),
     )

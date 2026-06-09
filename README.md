@@ -50,16 +50,23 @@ executor, `backend.run(...)` uses Qiskit's local `BasicSimulator`.
 
 The package also includes `QubexPulseExecutor`, which converts supported Qiskit
 circuits into Qubex `PulseSchedule` objects and calls
-`measurement_service.execute(...)`:
+`measurement_service.execute(...)`. In production you should create and
+configure a Qubex `Experiment` first, then inject it into the provider:
 
 ```python
+from qubex import Experiment
 from qiskit import QuantumCircuit, transpile
 from qiskit_qubex_provider import QubexProvider
 
-provider = QubexProvider(
-    qubex_experiment,
-    use_qubex_executor=True,
+exp = Experiment(
+    system_id="64Q-HF-Q1",
+    qubits=["Q00", "Q01"],
+    config_dir="...",
+    params_dir="...",
 )
+exp.connect()
+
+provider = QubexProvider.from_experiment(exp)
 backend = provider.get_backend()
 
 circuit = QuantumCircuit(2, 2)
@@ -71,6 +78,25 @@ transpiled = transpile(circuit, backend)
 job = backend.run(transpiled, shots=1024)
 counts = job.result().get_counts()
 ```
+
+For simple setup code, the provider can create the `Experiment` for you. Device
+connection is opt-in:
+
+```python
+provider = QubexProvider.from_experiment_config(
+    system_id="64Q-HF-Q1",
+    qubits=["Q00", "Q01"],
+    config_dir="...",
+    params_dir="...",
+    connect_devices=True,
+)
+```
+
+A bare Qubex `Measurement` object is not enough for gate-level Qiskit circuits,
+because the executor needs the calibrated pulse methods provided by
+`Experiment.pulse` (`x90`, `x180`, `cx`, and related operations). For custom
+hardware paths, pass an object implementing `run(circuits, **options)` as
+`executor=...`.
 
 `QubexPulseExecutor` currently supports the calibrated gate-level subset
 `id`, `x`, `sx`, `sxdg`, `y`, `h`, `s`, `sdg`, `z`, `rx(0|+/-pi/2|pi)`,

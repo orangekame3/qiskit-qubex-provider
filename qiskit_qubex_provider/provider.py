@@ -79,3 +79,62 @@ class QubexProvider:
     ) -> QubexEstimatorV2:
         """Return a Qiskit V2 Estimator for a Qubex backend."""
         return QubexEstimatorV2(backend or self._backend, **options)
+
+    @classmethod
+    def from_experiment(
+        cls,
+        experiment: Any,
+        *,
+        name: str = "qubex",
+        execute_options: dict[str, Any] | None = None,
+        **backend_options: Any,
+    ) -> "QubexProvider":
+        """Create a provider from an already configured Qubex Experiment."""
+        executor = QubexPulseExecutor(
+            experiment,
+            execute_options=execute_options,
+        )
+        qubit_labels = executor.qubit_labels
+        return cls(
+            experiment,
+            name=name,
+            executor=executor,
+            **backend_options,
+        )
+
+    @classmethod
+    def from_experiment_config(
+        cls,
+        *,
+        name: str = "qubex",
+        system_id: str | None = None,
+        chip_id: str | None = None,
+        qubits: Iterable[str | int],
+        connect_devices: bool = False,
+        execute_options: dict[str, Any] | None = None,
+        **experiment_options: Any,
+    ) -> "QubexProvider":
+        """Create a Qubex Experiment and wrap it in a provider.
+
+        Hardware connection is opt-in. By default this loads the Qubex session
+        configuration but does not connect devices.
+        """
+        try:
+            from qubex import Experiment
+        except ImportError as exc:
+            raise ImportError(
+                "QubexProvider.from_experiment_config requires qubex to be installed."
+            ) from exc
+        experiment = Experiment(
+            system_id=system_id,
+            chip_id=chip_id,
+            qubits=list(qubits),
+            **experiment_options,
+        )
+        if connect_devices:
+            experiment.connect()
+        return cls.from_experiment(
+            experiment,
+            name=name,
+            execute_options=execute_options,
+        )
