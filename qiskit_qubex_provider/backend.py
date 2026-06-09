@@ -84,5 +84,11 @@ class QubexBackend(BackendV2):
             key: value for key, value in run_options.items() if value is not None
         }
         if self._executor is not None:
-            return self._executor.run(run_input, **run_options)
+            job = self._executor.run(run_input, **run_options)
+            if getattr(job, "_backend", None) is None:
+                try:
+                    job._backend = self
+                except AttributeError:
+                    pass
+            return job
         return self._simulator.run(run_input, **run_options)

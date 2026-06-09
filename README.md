@@ -47,3 +47,33 @@ uv pip install -e ../qubex/packages/qxdriver-quel1
 For hardware execution, pass an executor object with a `run(circuits,
 **options)` method through `QubexProvider(..., executor=...)`. Without an
 executor, `backend.run(...)` uses Qiskit's local `BasicSimulator`.
+
+The package also includes `QubexPulseExecutor`, which converts supported Qiskit
+circuits into Qubex `PulseSchedule` objects and calls
+`measurement_service.execute(...)`:
+
+```python
+from qiskit import QuantumCircuit, transpile
+from qiskit_qubex_provider import QubexProvider
+
+provider = QubexProvider(
+    qubex_experiment,
+    use_qubex_executor=True,
+)
+backend = provider.get_backend()
+
+circuit = QuantumCircuit(2, 2)
+circuit.h(0)
+circuit.cx(0, 1)
+circuit.measure([0, 1], [0, 1])
+
+transpiled = transpile(circuit, backend)
+job = backend.run(transpiled, shots=1024)
+counts = job.result().get_counts()
+```
+
+`QubexPulseExecutor` currently supports the calibrated gate-level subset
+`id`, `x`, `sx`, `sxdg`, `y`, `h`, `s`, `sdg`, `z`, `rx(0|+/-pi/2|pi)`,
+`ry(0|+/-pi/2|pi)`, `rz(theta)`, `cx`, `cz`, `barrier`, `delay`, and terminal
+measurements. Unsupported circuits should be transpiled to this target or run
+through a custom executor.
