@@ -592,6 +592,78 @@ def test_qubex_executor_accepts_no_argument_get_counts(monkeypatch) -> None:
     assert result.get_counts() == {"1": 3, "0": 2}
 
 
+@pytest.mark.parametrize(
+    "raw_result",
+    [
+        {"counts": {"1": 2, "0": 1}, "memory": ["1", "0", "1"]},
+        SimpleNamespace(
+            counts={"1": 2, "0": 1},
+            memory=[(1,), (0,), (1,)],
+        ),
+    ],
+)
+def test_qubex_executor_uses_raw_memory_when_available(raw_result, monkeypatch) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return raw_result
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    result = backend.run(circuit, shots=3, memory=True).result()
+
+    assert result.get_counts() == {"1": 2, "0": 1}
+    assert result.get_memory() == ["1", "0", "1"]
+
+
+def test_qubex_executor_accepts_no_argument_get_memory(monkeypatch) -> None:
+    class FakeRawResult:
+        def get_counts(self):
+            return {"1": 2, "0": 1}
+
+        def get_memory(self):
+            return ["1", "0", "1"]
+
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return FakeRawResult()
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    result = backend.run(circuit, shots=3, memory=True).result()
+
+    assert result.get_memory() == ["1", "0", "1"]
+
+
 def test_provider_from_experiment_uses_qubex_executor() -> None:
     class FakePulse:
         def x90(self, target):
