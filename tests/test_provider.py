@@ -410,6 +410,21 @@ def test_backend_can_delegate_to_executor() -> None:
     assert executor.calls[0][1]["shots"] == 7
 
 
+def test_qubex_executor_rejects_empty_circuit_iterable() -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    executor = QubexPulseExecutor(FakeExperiment())
+
+    with pytest.raises(TypeError, match="non-empty"):
+        executor.run([])
+    with pytest.raises(TypeError, match="non-empty"):
+        executor.validate([])
+
+
 def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
     class FakePulseSchedule:
         def __init__(self, channels=None):

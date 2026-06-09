@@ -796,9 +796,12 @@ def _normalize_circuits(run_input: Any) -> list[QuantumCircuit]:
         return [run_input]
     if isinstance(run_input, Iterable):
         circuits = list(run_input)
-        if all(isinstance(circuit, QuantumCircuit) for circuit in circuits):
+        if circuits and all(isinstance(circuit, QuantumCircuit) for circuit in circuits):
             return circuits
-    raise TypeError("QubexPulseExecutor.run expects a QuantumCircuit or iterable of QuantumCircuit objects.")
+    raise TypeError(
+        "QubexPulseExecutor.run expects a QuantumCircuit or non-empty "
+        "iterable of QuantumCircuit objects."
+    )
 
 
 def _import_pulse_schedule() -> type:
