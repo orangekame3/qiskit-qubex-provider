@@ -54,6 +54,9 @@ class DurationPulse:
     def hadamard(self, target):
         return DurationObject(f"h-{target}", 12)
 
+    def readout(self, target):
+        return DurationObject(f"readout-{target}", 20)
+
     def cx(self, control, target):
         return DurationSchedule(
             [control, target, f"{control}-{target}"],
@@ -253,6 +256,9 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
         def hadamard(self, target):
             return ("h", target)
 
+        def readout(self, target):
+            return ("readout", target)
+
         def cx(self, control, target):
             schedule = FakePulseSchedule([control, target])
             schedule.add(f"{control}-{target}", ("cx", control, target))
@@ -265,7 +271,7 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
 
     class FakeMeasureResult:
         def get_counts(self, targets):
-            assert tuple(targets) == ("Q0", "Q1")
+            assert tuple(targets) == (("Q0", 0), ("Q1", 0))
             return {"10": 3, "01": 2}
 
     class FakeMeasurementService:
@@ -308,7 +314,7 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
     execute_call = qubex.measurement_service.calls[0]
     assert execute_call["n_shots"] == 5
     assert execute_call["state_classification"] is True
-    assert execute_call["final_measurement"] is True
+    assert execute_call["final_measurement"] is False
 
 
 def test_provider_from_experiment_uses_qubex_executor() -> None:
@@ -370,6 +376,7 @@ def test_provider_from_experiment_populates_target_durations() -> None:
     assert backend.target["sx"][(0,)].duration == pytest.approx(4e-9)
     assert backend.target["h"][(0,)].duration == pytest.approx(12e-9)
     assert backend.target["cx"][(0, 1)].duration == pytest.approx(24e-9)
+    assert backend.target["measure"][(0,)].duration == pytest.approx(20e-9)
     assert backend.target["rz"][(0,)].duration == 0.0
 
 
@@ -396,6 +403,8 @@ def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
 
     q0_ops = [op for op in schedule.ops if op[0] == "add" and op[1] == "Q0"]
     q1_ops = [op for op in schedule.ops if op[0] == "add" and op[1] == "Q1"]
+    rq0_ops = [op for op in schedule.ops if op[0] == "add" and op[1] == "RQ0"]
+    rq1_ops = [op for op in schedule.ops if op[0] == "add" and op[1] == "RQ1"]
     assert q0_ops[0][2].name == "x180-Q0"
     assert q0_ops[1][2].name == "blank"
     assert q0_ops[1][2].duration == pytest.approx(10)
@@ -409,6 +418,106 @@ def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
     assert q1_ops[2][2].duration == 2
     assert q1_ops[3][2].name == "blank"
     assert q1_ops[3][2].duration == 5
+    assert rq0_ops[0][2].name == "blank"
+    assert rq0_ops[0][2].duration == pytest.approx(25)
+    assert rq0_ops[1][2].name == "readout-Q0"
+    assert rq1_ops[0][2].name == "blank"
+    assert rq1_ops[0][2].duration == pytest.approx(25)
+    assert rq1_ops[1][2].name == "readout-Q1"
+
+
+def test_qubex_executor_supports_mid_circuit_measurement_without_feedback(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+        def resolve_read_label(self, target, allow_legacy=False):
+            return f"R{target}"
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(1, 2)
+    circuit.x(0)
+    circuit.measure(0, 0)
+    circuit.x(0)
+    circuit.measure(0, 1)
+
+    executor = QubexPulseExecutor(FakeExperiment())
+    schedule = executor.build_schedule(circuit)
+    measured_targets, target_to_clbit = executor._measurement_mapping(circuit)
+
+    readout_ops = [op for op in schedule.ops if op[0] == "add" and op[1] == "RQ0"]
+    assert [op[2].name for op in readout_ops] == ["readout-Q0", "readout-Q0"]
+    assert measured_targets == [("Q0", 0), ("Q0", 1)]
+    assert target_to_clbit == {("Q0", 0): 0, ("Q0", 1): 1}
+
+
+def test_qubex_executor_rejects_dynamic_circuit_control() -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+    with circuit.if_test((circuit.clbits[0], True)):
+        circuit.x(0)
+
+    with pytest.raises(ValueError, match="dynamic Qiskit circuits"):
+        QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+
+def test_qubex_executor_rejects_mid_circuit_reset() -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    circuit = QuantumCircuit(1, 1)
+    circuit.x(0)
+    circuit.reset(0)
+    circuit.measure(0, 0)
+
+    with pytest.raises(ValueError, match="Mid-circuit reset"):
+        QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+
+def test_qubex_executor_rejects_repeated_clbit_measurement() -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    circuit = QuantumCircuit(1, 2)
+    circuit.measure(0, 0)
+    circuit.measure(0, 0)
+
+    with pytest.raises(ValueError, match="same clbit"):
+        QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+
+def test_qubex_executor_allows_initial_reset(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(1, 1)
+    circuit.reset(0)
+    circuit.x(0)
+    circuit.measure(0, 0)
+
+    schedule = QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+    assert any(op[0] == "add" and op[1] == "Q0" for op in schedule.ops)
 
 
 def test_transpile_scheduling_uses_qubex_target_durations() -> None:
