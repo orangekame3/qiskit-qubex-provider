@@ -1032,6 +1032,43 @@ def test_qubex_executor_rejects_invalid_count_values(count, monkeypatch) -> None
         backend.run(circuit, shots=5).result()
 
 
+@pytest.mark.parametrize(
+    ("raw_result", "message"),
+    [
+        ({"counts": ["1", "0"]}, "counts"),
+        ({"memory": ["1", "0"]}, "counts mapping"),
+    ],
+)
+def test_qubex_executor_rejects_invalid_count_result_shape(
+    raw_result,
+    message,
+    monkeypatch,
+) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return raw_result
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1, name="shape_error")
+    circuit.measure(0, 0)
+
+    with pytest.raises(TypeError, match=message):
+        backend.run(circuit, shots=1).result()
+
+
 def test_qubex_executor_rejects_memory_length_mismatch(monkeypatch) -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
