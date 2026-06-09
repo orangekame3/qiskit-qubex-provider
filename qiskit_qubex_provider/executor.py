@@ -328,7 +328,7 @@ class QubexPulseExecutor:
             )
             counts[hex_value] += int(count)
             memory.extend([hex_value] * int(count))
-        return counts, memory
+        return counts, self._raw_memory(execution) or memory
 
     @staticmethod
     def _raw_counts(execution: QubexCircuitExecution) -> Mapping[Any, Any]:
@@ -353,6 +353,40 @@ class QubexPulseExecutor:
             "Qubex execution result must expose get_counts(...), a counts "
             "mapping, or a {'counts': ...} mapping."
         )
+
+    def _raw_memory(self, execution: QubexCircuitExecution) -> list[str] | None:
+        raw_memory = self._raw_memory_values(execution)
+        if raw_memory is None:
+            return None
+        return [
+            self._qubex_bitstring_to_hex(
+                _classified_bitstring(value),
+                execution,
+            )
+            for value in raw_memory
+        ]
+
+    @staticmethod
+    def _raw_memory_values(execution: QubexCircuitExecution) -> Sequence[Any] | None:
+        raw_result = execution.raw_result
+        get_memory = getattr(raw_result, "get_memory", None)
+        if callable(get_memory):
+            try:
+                memory = get_memory(execution.measured_targets)
+            except TypeError:
+                memory = get_memory()
+            if isinstance(memory, Sequence) and not isinstance(memory, str):
+                return memory
+        if isinstance(raw_result, Mapping):
+            memory = raw_result.get("memory")
+            if isinstance(memory, Sequence) and not isinstance(memory, str):
+                return memory
+        memory = getattr(raw_result, "memory", None)
+        if callable(memory):
+            memory = memory()
+        if isinstance(memory, Sequence) and not isinstance(memory, str):
+            return memory
+        return None
 
     def _qubex_bitstring_to_hex(
         self,
