@@ -214,3 +214,56 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
     assert execute_call["n_shots"] == 5
     assert execute_call["state_classification"] is True
     assert execute_call["final_measurement"] is True
+
+
+def test_provider_from_experiment_uses_qubex_executor() -> None:
+    class FakePulse:
+        def x90(self, target):
+            return ("x90", target)
+
+        def x180(self, target):
+            return ("x180", target)
+
+        def y90(self, target):
+            return ("y90", target)
+
+        def y180(self, target):
+            return ("y180", target)
+
+        def z90(self):
+            return "z90"
+
+        def z180(self):
+            return "z180"
+
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = FakePulse()
+            self.measurement_service = FakeMeasurementService()
+
+    provider = QubexProvider.from_experiment(FakeExperiment())
+    backend = provider.get_backend()
+
+    assert backend.num_qubits == 2
+    assert backend.target.num_qubits == 2
+    assert isinstance(backend._executor, QubexPulseExecutor)
+
+
+def test_qubex_executor_requires_experiment_like_object() -> None:
+    with pytest.raises(ValueError, match="requires a Qubex Experiment-like object"):
+        QubexPulseExecutor(None)
+
+    class BareMeasurement:
+        qubit_labels = ("Q0",)
+
+        def execute(self, **kwargs):
+            return None
+
+    with pytest.raises(TypeError, match="bare qubex.Measurement"):
+        QubexPulseExecutor(BareMeasurement())

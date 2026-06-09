@@ -44,11 +44,21 @@ class QubexPulseExecutor:
         qubit_labels: Sequence[str] | None = None,
         execute_options: Mapping[str, Any] | None = None,
     ) -> None:
+        if qubex is None:
+            raise ValueError(
+                "QubexPulseExecutor requires a Qubex Experiment-like object. "
+                "Create qubex.Experiment(...) and pass it as QubexProvider(qubex=exp, use_qubex_executor=True), "
+                "or pass a custom executor."
+            )
         self._qubex = qubex
         self._qubit_labels = tuple(qubit_labels or self._infer_qubit_labels(qubex))
         self._execute_options = dict(execute_options or {})
         if not self._qubit_labels:
-            raise ValueError("qubit_labels must be supplied or inferable from the Qubex object.")
+            raise ValueError(
+                "qubit_labels must be supplied or inferable from the Qubex object. "
+                "For production use, pass a configured qubex.Experiment with selected qubits."
+            )
+        self._pulse_source()
 
     @property
     def qubit_labels(self) -> tuple[str, ...]:
@@ -255,7 +265,12 @@ class QubexPulseExecutor:
                 for name in ("x90", "x180", "y90", "y180", "z90", "z180")
             ):
                 return candidate
-        raise TypeError("Qubex object does not expose the calibrated pulse API required for circuit execution.")
+        raise TypeError(
+            "Qubex object does not expose the calibrated pulse API required for circuit execution. "
+            "Use a qubex.Experiment instance, or an object exposing x90/x180/y90/y180/z90/z180/cx/cz "
+            "and execute(schedule=..., ...). A bare qubex.Measurement session is not sufficient "
+            "for gate-level Qiskit circuit execution."
+        )
 
     def _execute_source(self) -> Any:
         measurement_service = getattr(self._qubex, "measurement_service", None)
@@ -263,7 +278,10 @@ class QubexPulseExecutor:
             return measurement_service
         if hasattr(self._qubex, "execute"):
             return self._qubex
-        raise TypeError("Qubex object does not expose execute(schedule=..., ...) or measurement_service.execute(...).")
+        raise TypeError(
+            "Qubex object does not expose execute(schedule=..., ...) or measurement_service.execute(...). "
+            "Pass a configured qubex.Experiment instance or a custom executor."
+        )
 
     @staticmethod
     def _add_rx(schedule: Any, pulse: Any, target: str, theta: float) -> None:
