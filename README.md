@@ -207,6 +207,32 @@ backend.validate(scheduled)
 job = backend.run(scheduled, shots=1024)
 ```
 
+The built-in executor returns Qiskit counts, so it requires classified Qubex
+measurement results. Keep `state_classification=True`, which is the default.
+If the circuit has explicit Qiskit `measure` instructions,
+`final_measurement` defaults to `False`; otherwise it defaults to `True` so the
+executor can still produce counts from Qubex final measurement. Disabling
+`final_measurement` for a circuit without explicit measurements is rejected
+before hardware execution.
+
+Execution options are validated before calling Qubex:
+
+```python
+backend.run(
+    scheduled,
+    shots=1024,      # positive integer
+    memory=True,     # optional Qiskit shot memory
+    plot=False,      # Qubex option, boolean
+)
+```
+
+`shots` must be a positive integer or integer string. `memory`,
+`state_classification`, `final_measurement`, and `plot` must be booleans; string
+values such as `"False"` are rejected rather than interpreted through Python
+truthiness. Qubex-specific execution options other than those reserved names
+are passed through to `measurement_service.execute(...)`. Qiskit
+`seed_simulator` is ignored on the Qubex hardware path.
+
 For simple setup code, the provider can create the `Experiment` for you. Device
 connection is opt-in:
 
