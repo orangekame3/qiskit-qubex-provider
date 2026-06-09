@@ -242,6 +242,14 @@ class QubexPulseExecutor:
         execute_options.update(options)
         execute_options.setdefault("state_classification", True)
         execute_options.setdefault("final_measurement", not _has_explicit_measurements(circuit))
+        if (
+            not _has_explicit_measurements(circuit)
+            and not execute_options["final_measurement"]
+        ):
+            raise ValueError(
+                "QubexPulseExecutor cannot produce Qiskit counts for a circuit "
+                "without explicit measurements when final_measurement=False."
+            )
         execute_options.setdefault("plot", False)
         execute_options["n_shots"] = shots
         raw_result = self._execute_source().execute(schedule=schedule, **execute_options)
