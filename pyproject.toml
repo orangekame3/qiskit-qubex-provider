@@ -27,6 +27,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
 ]
 
+[project.scripts]
+qiskit-qubex-device-topology = "qiskit_qubex_provider.device_topology:main"
+
 [project.optional-dependencies]
 qubex = []
 dev = [
