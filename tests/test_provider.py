@@ -736,6 +736,66 @@ def test_qubex_executor_rejects_count_total_mismatch(monkeypatch) -> None:
         backend.run(circuit, shots=5).result()
 
 
+def test_qubex_executor_accepts_integer_string_shots(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"counts": {"1": 3, "0": 2}}
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    experiment = FakeExperiment()
+    backend = QubexProvider.from_experiment(experiment).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    result = backend.run(circuit, shots="5").result()
+
+    assert result.get_counts() == {"1": 3, "0": 2}
+    assert experiment.measurement_service.calls[0]["n_shots"] == 5
+
+
+@pytest.mark.parametrize("shots", [0, -1, 2.5, True, "2.5"])
+def test_qubex_executor_rejects_invalid_shots(shots, monkeypatch) -> None:
+    class FakeMeasurementService:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"counts": {"1": 1}}
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    experiment = FakeExperiment()
+    backend = QubexProvider.from_experiment(experiment).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    with pytest.raises(ValueError, match="positive integer"):
+        backend.run(circuit, shots=shots)
+    assert experiment.measurement_service.calls == []
+
+
 def test_qubex_executor_accepts_integer_string_counts(monkeypatch) -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):

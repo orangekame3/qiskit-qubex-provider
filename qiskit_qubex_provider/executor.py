@@ -70,7 +70,7 @@ class QubexPulseExecutor:
     def run(self, run_input: Any, **options: Any) -> QubexJob:
         """Execute one or more Qiskit circuits on Qubex."""
         circuits = _normalize_circuits(run_input)
-        shots = int(options.pop("shots", 1024))
+        shots = _shot_count(options.pop("shots", 1024))
         memory = bool(options.pop("memory", False))
         options.pop("seed_simulator", None)
         job_id = str(uuid.uuid4())
@@ -847,6 +847,20 @@ def _classified_count(value: Any) -> int:
     if count < 0:
         raise ValueError("Qubex classified counts must be non-negative integers.")
     return count
+
+
+def _shot_count(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("Qubex shots must be a positive integer.")
+    if isinstance(value, Integral):
+        shots = int(value)
+    elif isinstance(value, str) and value.isdecimal():
+        shots = int(value)
+    else:
+        raise ValueError("Qubex shots must be a positive integer.")
+    if shots <= 0:
+        raise ValueError("Qubex shots must be a positive integer.")
+    return shots
 
 
 def _qxpulse_default_sampling_period_ns() -> float | None:
