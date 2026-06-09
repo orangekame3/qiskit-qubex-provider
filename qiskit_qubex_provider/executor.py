@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from math import pi
+from numbers import Integral
 from typing import Any
 
 from qiskit.circuit import ClassicalRegister, QuantumCircuit, Qubit
@@ -331,12 +332,13 @@ class QubexPulseExecutor:
         counts: Counter[str] = Counter()
         memory: list[str] = []
         for qubex_bitstring, count in raw_counts.items():
+            count_value = _classified_count(count)
             hex_value = self._qubex_bitstring_to_hex(
                 _classified_bitstring(qubex_bitstring),
                 execution,
             )
-            counts[hex_value] += int(count)
-            memory.extend([hex_value] * int(count))
+            counts[hex_value] += count_value
+            memory.extend([hex_value] * count_value)
         return counts, self._raw_memory(execution) or memory
 
     @staticmethod
@@ -831,6 +833,20 @@ def _classified_bitstring(value: Any) -> str:
     if isinstance(value, Sequence):
         return "".join(str(bit) for bit in value)
     return str(value)
+
+
+def _classified_count(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("Qubex classified counts must be non-negative integers.")
+    if isinstance(value, Integral):
+        count = int(value)
+    elif isinstance(value, str) and value.isdecimal():
+        count = int(value)
+    else:
+        raise ValueError("Qubex classified counts must be non-negative integers.")
+    if count < 0:
+        raise ValueError("Qubex classified counts must be non-negative integers.")
+    return count
 
 
 def _qxpulse_default_sampling_period_ns() -> float | None:
