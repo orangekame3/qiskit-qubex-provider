@@ -131,6 +131,25 @@ scheduled = transpile(circuit, backend, scheduling_method="asap")
 scheduled = transpile(circuit, backend, scheduling_method="alap")
 ```
 
+For dynamical decoupling, build a DD pass manager from the same backend target
+after layout/routing has mapped the circuit to physical qubits:
+
+```python
+from qiskit_qubex_provider import build_dynamical_decoupling_pass_manager
+
+physical = transpile(circuit, backend, optimization_level=1)
+dd_passes = build_dynamical_decoupling_pass_manager(
+    backend,
+    sequence="xy4",
+    scheduling_method="alap",
+)
+scheduled = dd_passes.run(physical)
+```
+
+The built-in sequences are `"xx"`, `"xy4"`, and `"x"`/`"hahn"`. You can also
+pass a concrete Qiskit gate sequence. For coupling-context-aware X-sequence DD,
+set `context_aware=True`.
+
 Scheduled Qiskit operation start times are preserved when building the Qubex
 `PulseSchedule`: idle time and Qiskit `delay` instructions become Qubex
 `Blank` pulses. Qiskit `measure` instructions become Qubex readout pulses at

@@ -17,6 +17,7 @@ from qiskit_qubex_provider import (
     QubexProvider,
     QubexSamplerV2,
     build_device_topology,
+    build_dynamical_decoupling_pass_manager,
     build_qubex_target,
     qid_to_label,
     write_device_topology,
@@ -108,6 +109,9 @@ class DurationSchedule:
 
     def barrier(self, labels=None):
         self.ops.append(("barrier", labels))
+
+    def is_valid(self):
+        return True
 
 
 class DurationBlank(DurationObject):
@@ -926,6 +930,26 @@ def test_qubex_executor_allows_multiplexed_readout_resource_windows() -> None:
     QubexPulseExecutor(FakeExperiment())._validate_resource_constraints(FakeSchedule())
 
 
+def test_qubex_executor_rejects_invalid_native_pulse_schedule(monkeypatch) -> None:
+    class InvalidSchedule(DurationSchedule):
+        def is_valid(self):
+            return False
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: InvalidSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(1)
+    circuit.x(0)
+
+    with pytest.raises(ValueError, match="Invalid Qubex pulse schedule"):
+        QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+
 def test_transpile_scheduling_uses_qubex_target_durations() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
@@ -996,6 +1020,79 @@ def test_independent_cx_operations_are_scheduled_in_parallel(monkeypatch) -> Non
         op for op in schedule.ops
         if op[0] == "add" and op[1] in {"Q2", "Q3"} and op[2].name == "blank"
     ]
+
+
+def test_dynamical_decoupling_pass_manager_inserts_dd_sequence(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1)
+    circuit.x(0)
+    circuit.delay(100, 0, unit="ns")
+    circuit.x(0)
+
+    dd_circuit = build_dynamical_decoupling_pass_manager(
+        backend,
+        sequence="xy4",
+    ).run(circuit)
+
+    assert dd_circuit.count_ops()["x"] >= 4
+    assert dd_circuit.count_ops()["y"] >= 2
+    assert dd_circuit.count_ops()["delay"] >= 2
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    schedule = backend._executor.build_schedule(dd_circuit)
+    added_names = [
+        op[2].name
+        for op in schedule.ops
+        if op[0] == "add" and op[1] == "Q0" and hasattr(op[2], "name")
+    ]
+
+    assert "x180-Q0" in added_names
+    assert "y180-Q0" in added_names
+    assert "blank" in added_names
+
+
+def test_context_aware_dynamical_decoupling_pass_manager_runs() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        coupling_map=[(0, 1)],
+    ).get_backend()
+    circuit = QuantumCircuit(2)
+    circuit.x(0)
+    circuit.delay(100, 0, unit="ns")
+    circuit.cx(0, 1)
+
+    dd_circuit = build_dynamical_decoupling_pass_manager(
+        backend,
+        context_aware=True,
+    ).run(circuit)
+
+    assert dd_circuit.num_qubits == 2
+    assert "delay" in dd_circuit.count_ops()
 
 
 def test_transpile_scheduling_decomposes_parameterized_rotations() -> None:

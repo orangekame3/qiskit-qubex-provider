@@ -188,6 +188,7 @@ class QubexPulseExecutor:
                         f"Unsupported Qiskit instruction {name!r} for Qubex pulse execution. "
                         "Transpile to the backend target or provide a custom executor."
                     )
+        self._validate_native_schedule(schedule)
         self._validate_resource_constraints(schedule)
         return schedule
 
@@ -442,6 +443,14 @@ class QubexPulseExecutor:
                         f"on hardware resource {resource_key!r}."
                     )
                 previous = current
+
+    @staticmethod
+    def _validate_native_schedule(schedule: Any) -> None:
+        is_valid = getattr(schedule, "is_valid", None)
+        if is_valid is None:
+            return
+        if not is_valid():
+            raise ValueError("Invalid Qubex pulse schedule.")
 
     def _resource_key(self, label: str) -> str | None:
         target = self._target_metadata(label)
