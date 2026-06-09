@@ -325,15 +325,21 @@ class QubexPulseExecutor:
     ) -> Result:
         results = []
         for execution in executions:
-            counts, memory_values = self._qiskit_counts_and_memory(
-                execution,
-                include_memory=memory,
-            )
-            self._validate_result_shots(
-                counts=counts,
-                memory_values=memory_values if memory else None,
-                shots=shots,
-            )
+            try:
+                counts, memory_values = self._qiskit_counts_and_memory(
+                    execution,
+                    include_memory=memory,
+                )
+                self._validate_result_shots(
+                    counts=counts,
+                    memory_values=memory_values if memory else None,
+                    shots=shots,
+                )
+            except (TypeError, ValueError) as exc:
+                raise type(exc)(
+                    f"Failed to convert Qubex result for circuit "
+                    f"{execution.circuit.name!r}: {exc}"
+                ) from exc
             data: dict[str, Any] = {"counts": dict(counts)}
             if memory:
                 data["memory"] = memory_values

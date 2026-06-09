@@ -1046,6 +1046,40 @@ def test_qubex_executor_rejects_memory_length_mismatch(monkeypatch) -> None:
         backend.run(circuit, shots=3, memory=True).result()
 
 
+def test_qubex_executor_result_error_includes_circuit_name(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def __init__(self):
+            self.calls = 0
+
+        def execute(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {"counts": {"1": 1}}
+            return {"counts": {"1": 2}}
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    first = QuantumCircuit(1, 1, name="ok_circuit")
+    first.measure(0, 0)
+    second = QuantumCircuit(1, 1, name="bad_circuit")
+    second.measure(0, 0)
+
+    with pytest.raises(ValueError, match="bad_circuit"):
+        backend.run([first, second], shots=1).result()
+
+
 def test_qubex_executor_rejects_empty_raw_memory(monkeypatch) -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
