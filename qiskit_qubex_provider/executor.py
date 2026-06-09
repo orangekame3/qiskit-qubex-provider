@@ -318,14 +318,41 @@ class QubexPulseExecutor:
         self,
         execution: QubexCircuitExecution,
     ) -> tuple[Counter[str], list[str]]:
-        raw_counts = execution.raw_result.get_counts(execution.measured_targets)
+        raw_counts = self._raw_counts(execution)
         counts: Counter[str] = Counter()
         memory: list[str] = []
         for qubex_bitstring, count in raw_counts.items():
-            hex_value = self._qubex_bitstring_to_hex(str(qubex_bitstring), execution)
+            hex_value = self._qubex_bitstring_to_hex(
+                _classified_bitstring(qubex_bitstring),
+                execution,
+            )
             counts[hex_value] += int(count)
             memory.extend([hex_value] * int(count))
         return counts, memory
+
+    @staticmethod
+    def _raw_counts(execution: QubexCircuitExecution) -> Mapping[Any, Any]:
+        raw_result = execution.raw_result
+        get_counts = getattr(raw_result, "get_counts", None)
+        if callable(get_counts):
+            try:
+                return get_counts(execution.measured_targets)
+            except TypeError:
+                return get_counts()
+        if isinstance(raw_result, Mapping):
+            nested_counts = raw_result.get("counts")
+            if isinstance(nested_counts, Mapping):
+                return nested_counts
+            return raw_result
+        counts = getattr(raw_result, "counts", None)
+        if callable(counts):
+            counts = counts()
+        if isinstance(counts, Mapping):
+            return counts
+        raise TypeError(
+            "Qubex execution result must expose get_counts(...), a counts "
+            "mapping, or a {'counts': ...} mapping."
+        )
 
     def _qubex_bitstring_to_hex(
         self,
@@ -734,6 +761,14 @@ def _duration_seconds_safe(factory: Any) -> float | None:
     except Exception:
         return None
     return _duration_ns(obj) * 1e-9
+
+
+def _classified_bitstring(value: Any) -> str:
+    if isinstance(value, str):
+        return value.replace(" ", "")
+    if isinstance(value, Sequence):
+        return "".join(str(bit) for bit in value)
+    return str(value)
 
 
 def _qxpulse_default_sampling_period_ns() -> float | None:
