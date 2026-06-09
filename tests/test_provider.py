@@ -15,8 +15,12 @@ from qiskit_qubex_provider import (
     QubexPulseExecutor,
     QubexProvider,
     QubexSamplerV2,
+    build_device_topology,
     build_qubex_target,
+    qid_to_label,
+    write_device_topology,
 )
+from qiskit_qubex_provider.device_topology import main as device_topology_main
 import qiskit_qubex_provider.executor as executor_module
 
 
@@ -204,6 +208,137 @@ def test_provider_from_device_topology_file(tmp_path) -> None:
     assert backend.name == "anemone"
     assert backend.target.num_qubits == 2
     assert (0, 1) in backend.target["cx"]
+
+
+def test_device_topology_label_width_matches_device_gateway() -> None:
+    assert qid_to_label(7, 64) == "Q07"
+    assert qid_to_label(7, 100) == "Q007"
+
+
+def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
+    calib_note_path = tmp_path / "calib_note.json"
+    calib_note_path.write_text(
+        json.dumps(
+            {
+                "drag_hpi_params": {
+                    "Q00": {"duration": 16},
+                    "Q01": {"duration": 18},
+                },
+                "drag_pi_params": {
+                    "Q00": {"duration": 24},
+                    "Q01": {"duration": 26},
+                },
+                "cr_params": {
+                    "Q00-Q01": {"duration": 272},
+                },
+                "calibrated_at": "2026-01-02T03:04:05Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    params_dir = tmp_path / "params"
+    params_dir.mkdir()
+    (params_dir / "x90_gate_fidelity.yaml").write_text(
+        "meta:\n  description: X90\n\ndata:\n  Q00: 0.99\n  Q01: 0.98\n",
+        encoding="utf-8",
+    )
+    (params_dir / "zx90_gate_fidelity.yaml").write_text(
+        "data:\n  Q00-Q01: 0.97\n",
+        encoding="utf-8",
+    )
+    (params_dir / "t1.yaml").write_text("data:\n  Q00: 25.0\n  Q01: 20.0\n", encoding="utf-8")
+    (params_dir / "t2_echo.yaml").write_text(
+        "data:\n  Q00: 30.0\n  Q01: 22.0\n",
+        encoding="utf-8",
+    )
+    (params_dir / "readout_fidelity_0.yaml").write_text(
+        "data:\n  Q00: 0.91\n  Q01: 0.92\n",
+        encoding="utf-8",
+    )
+    (params_dir / "readout_fidelity_1.yaml").write_text(
+        "data:\n  Q00: 0.93\n  Q01: 0.94\n",
+        encoding="utf-8",
+    )
+    (params_dir / "average_readout_fidelity.yaml").write_text(
+        "data:\n  Q00: 0.92\n  Q01: 0.93\n",
+        encoding="utf-8",
+    )
+
+    topology = build_device_topology(
+        calib_note_path=calib_note_path,
+        params_dir=params_dir,
+        topology={
+            "qubits": {
+                "0": {"row": 0, "col": 0},
+                "1": {"row": 0, "col": 1},
+            },
+            "couplings": [[0, 1]],
+        },
+        name="test-device",
+        device_id="test-device",
+    )
+
+    assert topology["name"] == "test-device"
+    assert topology["qubits"][0]["id"] == 0
+    assert topology["qubits"][0]["physical_id"] == 0
+    assert topology["qubits"][0]["gate_duration"] == {"rz": 0, "sx": 16, "x": 24}
+    assert topology["qubits"][0]["qubit_lifetime"] == {"t1": 25.0, "t2": 30.0}
+    assert topology["qubits"][0]["meas_error"]["prob_meas1_prep0"] == pytest.approx(0.09)
+    assert topology["couplings"] == [
+        {
+            "control": 0,
+            "target": 1,
+            "fidelity": 0.97,
+            "gate_duration": {"rzx90": 272},
+        }
+    ]
+
+    backend = QubexProvider.from_device_topology(topology).get_backend()
+    assert backend.target["sx"][(0,)].duration == pytest.approx(16e-9)
+    assert backend.target["cx"][(0, 1)].duration == pytest.approx(272e-9)
+
+
+def test_write_device_topology_cli(tmp_path) -> None:
+    calib_note_path = tmp_path / "calib_note.json"
+    calib_note_path.write_text(
+        json.dumps(
+            {
+                "drag_hpi_params": {"Q00": {"duration": 16}, "Q01": {"duration": 16}},
+                "drag_pi_params": {"Q00": {"duration": 24}, "Q01": {"duration": 24}},
+                "cr_params": {"Q00-Q01": {"duration": 272}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "device-topology.json"
+
+    topology = write_device_topology(
+        output_path,
+        calib_note_path=calib_note_path,
+        qubits=[0, 1],
+        topology={"couplings": [[0, 1]]},
+    )
+    assert json.loads(output_path.read_text(encoding="utf-8"))["couplings"] == topology[
+        "couplings"
+    ]
+
+    cli_output_path = tmp_path / "cli-device-topology.json"
+    assert (
+        device_topology_main(
+            [
+                "--calib-note",
+                str(calib_note_path),
+                "--qubits",
+                "0,1",
+                "--output-json",
+                str(cli_output_path),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(cli_output_path.read_text(encoding="utf-8"))["qubits"][0][
+        "physical_id"
+    ] == 0
 
 
 def test_backend_runs_qiskit_circuit_locally() -> None:

@@ -42,6 +42,29 @@ The provider reads `qubits`, `couplings`, qubit lifetimes, and gate durations
 from the topology file. Coupling `gate_duration.rzx90` is exposed as the
 scheduled two-qubit duration for `cx`/`cz`.
 
+If you have Qubex calibration files but not a generated Device Gateway topology
+file yet, the provider can generate one from `calib_note.json` and the Qubex
+`params` directory:
+
+```bash
+qiskit-qubex-device-topology \
+  --calib-note qubex-config/64Qv3/calibration/calib_note.json \
+  --params-dir qubex-config/64Qv3/params \
+  --output-json device-topology.json
+```
+
+The same generator is available as Python API:
+
+```python
+from qiskit_qubex_provider import build_device_topology
+
+topology = build_device_topology(
+    calib_note_path="qubex-config/64Qv3/calibration/calib_note.json",
+    params_dir="qubex-config/64Qv3/params",
+)
+provider = QubexProvider.from_device_topology(topology)
+```
+
 `qubex` is intentionally not a hard package dependency because the Qubex
 repository is commonly installed from a local checkout:
 
