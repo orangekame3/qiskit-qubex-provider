@@ -7,7 +7,10 @@ from .device_topology import (
     qid_to_label,
     write_device_topology,
 )
-from .dynamical_decoupling import build_dynamical_decoupling_pass_manager
+from .dynamical_decoupling import (
+    build_dynamical_decoupling_pass_manager,
+    build_topology_aware_dynamical_decoupling_pass_manager,
+)
 from .estimator import QubexEstimatorV2
 from .executor import QubexPulseExecutor
 from .job import QubexJob
@@ -24,6 +27,7 @@ __all__ = [
     "QubexSamplerV2",
     "build_device_topology",
     "build_dynamical_decoupling_pass_manager",
+    "build_topology_aware_dynamical_decoupling_pass_manager",
     "build_qubex_target",
     "label_to_qid",
     "qid_to_label",

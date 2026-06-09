@@ -18,6 +18,7 @@ from qiskit_qubex_provider import (
     QubexSamplerV2,
     build_device_topology,
     build_dynamical_decoupling_pass_manager,
+    build_topology_aware_dynamical_decoupling_pass_manager,
     build_qubex_target,
     qid_to_label,
     write_device_topology,
@@ -1089,6 +1090,36 @@ def test_context_aware_dynamical_decoupling_pass_manager_runs() -> None:
     dd_circuit = build_dynamical_decoupling_pass_manager(
         backend,
         context_aware=True,
+    ).run(circuit)
+
+    assert dd_circuit.num_qubits == 2
+    assert "delay" in dd_circuit.count_ops()
+
+
+def test_topology_aware_dynamical_decoupling_helper_runs() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        coupling_map=[(0, 1)],
+    ).get_backend()
+    circuit = QuantumCircuit(2)
+    circuit.x(0)
+    circuit.delay(100, 0, unit="ns")
+    circuit.cx(0, 1)
+
+    dd_circuit = build_topology_aware_dynamical_decoupling_pass_manager(
+        backend,
     ).run(circuit)
 
     assert dd_circuit.num_qubits == 2
