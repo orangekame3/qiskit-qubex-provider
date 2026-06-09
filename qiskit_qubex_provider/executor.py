@@ -71,7 +71,7 @@ class QubexPulseExecutor:
         """Execute one or more Qiskit circuits on Qubex."""
         circuits = _normalize_circuits(run_input)
         shots = _shot_count(options.pop("shots", 1024))
-        memory = bool(options.pop("memory", False))
+        memory = _bool_option("memory", options.pop("memory", False))
         options.pop("seed_simulator", None)
         job_id = str(uuid.uuid4())
         executions = [
@@ -241,12 +241,20 @@ class QubexPulseExecutor:
         execute_options = dict(self._execute_options)
         execute_options.update(options)
         execute_options.setdefault("state_classification", True)
+        execute_options["state_classification"] = _bool_option(
+            "state_classification",
+            execute_options["state_classification"],
+        )
         if not execute_options["state_classification"]:
             raise ValueError(
                 "QubexPulseExecutor requires state_classification=True to "
                 "produce Qiskit counts."
             )
         execute_options.setdefault("final_measurement", not _has_explicit_measurements(circuit))
+        execute_options["final_measurement"] = _bool_option(
+            "final_measurement",
+            execute_options["final_measurement"],
+        )
         if (
             not _has_explicit_measurements(circuit)
             and not execute_options["final_measurement"]
@@ -256,6 +264,7 @@ class QubexPulseExecutor:
                 "without explicit measurements when final_measurement=False."
             )
         execute_options.setdefault("plot", False)
+        execute_options["plot"] = _bool_option("plot", execute_options["plot"])
         execute_options["n_shots"] = shots
         raw_result = self._execute_source().execute(schedule=schedule, **execute_options)
         return QubexCircuitExecution(
@@ -874,6 +883,12 @@ def _shot_count(value: Any) -> int:
     if shots <= 0:
         raise ValueError("Qubex shots must be a positive integer.")
     return shots
+
+
+def _bool_option(name: str, value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"Qubex option {name!r} must be a boolean.")
+    return value
 
 
 def _qxpulse_default_sampling_period_ns() -> float | None:
