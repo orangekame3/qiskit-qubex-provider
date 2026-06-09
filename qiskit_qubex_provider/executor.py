@@ -95,6 +95,7 @@ class QubexPulseExecutor:
 
     def build_schedule(self, circuit: QuantumCircuit) -> Any:
         """Convert a supported Qiskit circuit into a Qubex PulseSchedule."""
+        self._validate_circuit_qubits(circuit)
         self._validate_static_circuit(circuit)
         pulse = self._pulse_source()
         pulse_schedule_cls = _import_pulse_schedule()
@@ -293,6 +294,7 @@ class QubexPulseExecutor:
         self,
         circuit: QuantumCircuit,
     ) -> tuple[list[str | tuple[str, int]], dict[str | tuple[str, int], int]]:
+        self._validate_circuit_qubits(circuit)
         self._validate_static_circuit(circuit)
         measured_targets: list[str | tuple[str, int]] = []
         target_to_clbit: dict[str | tuple[str, int], int] = {}
@@ -314,6 +316,14 @@ class QubexPulseExecutor:
                 target: index for index, target in enumerate(measured_targets)
             }
         return measured_targets, target_to_clbit
+
+    def _validate_circuit_qubits(self, circuit: QuantumCircuit) -> None:
+        if circuit.num_qubits > len(self._qubit_labels):
+            raise ValueError(
+                "Qiskit circuit uses more qubits than the Qubex executor has "
+                f"labels: circuit has {circuit.num_qubits}, executor has "
+                f"{len(self._qubit_labels)}."
+            )
 
     def _to_qiskit_result(
         self,

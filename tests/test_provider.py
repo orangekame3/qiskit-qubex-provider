@@ -1592,6 +1592,30 @@ def test_validate_without_qubex_executor_raises() -> None:
         backend.validate(circuit)
 
 
+def test_qubex_executor_rejects_circuit_with_too_many_qubits(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return {"counts": {"1": 1}}
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(2, 2)
+    circuit.measure([0, 1], [0, 1])
+
+    with pytest.raises(ValueError, match="more qubits"):
+        backend.validate(circuit)
+    with pytest.raises(ValueError, match="more qubits"):
+        backend.run(circuit, shots=1).result()
+
+
 def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0", "Q1")
