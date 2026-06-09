@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from qiskit.providers import BackendV2
@@ -26,6 +26,7 @@ class QubexProvider:
         num_qubits: int | None = None,
         coupling_map: Iterable[tuple[int, int]] | None = None,
         basis_gates: Iterable[str] | None = None,
+        instruction_durations: Mapping[str, Mapping[tuple[int, ...], float]] | None = None,
         executor: Any | None = None,
         use_qubex_executor: bool = False,
         backend_cls: type[QubexBackend] = QubexBackend,
@@ -39,6 +40,7 @@ class QubexProvider:
             num_qubits=num_qubits,
             coupling_map=coupling_map,
             basis_gates=basis_gates,
+            instruction_durations=instruction_durations,
             executor=executor,
             provider=self,
             **backend_options,
@@ -94,11 +96,12 @@ class QubexProvider:
             experiment,
             execute_options=execute_options,
         )
-        qubit_labels = executor.qubit_labels
+        backend_options.setdefault("dt", executor.dt_seconds())
         return cls(
             experiment,
             name=name,
             executor=executor,
+            instruction_durations=executor.instruction_durations_seconds(),
             **backend_options,
         )
 

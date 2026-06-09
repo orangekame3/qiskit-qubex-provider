@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, TypeAlias
 
 from qiskit.circuit import Delay, Measure, Parameter, Reset
 from qiskit.circuit.library import (
     CXGate,
+    CZGate,
     HGate,
     IGate,
     RXGate,
     RYGate,
     RZGate,
+    SGate,
+    SdgGate,
     SXGate,
+    SXdgGate,
     XGate,
+    YGate,
 )
 from qiskit.providers import QubitProperties
 from qiskit.transpiler import InstructionProperties, Target
@@ -25,12 +30,15 @@ QubexTargetSource: TypeAlias = Any
 _DEFAULT_BASIS_GATES = (
     "id",
     "rz",
+    "s",
+    "sdg",
     "sx",
+    "sxdg",
     "x",
-    "rx",
-    "ry",
+    "y",
     "h",
     "cx",
+    "cz",
     "measure",
     "reset",
     "delay",
@@ -43,6 +51,7 @@ def build_qubex_target(
     num_qubits: int | None = None,
     coupling_map: Iterable[tuple[int, int]] | None = None,
     basis_gates: Iterable[str] | None = None,
+    instruction_durations: Mapping[str, Mapping[tuple[int, ...], float]] | None = None,
     dt: float | None = 1e-9,
     description: str = "Qiskit target for Qubex",
 ) -> Target:
@@ -63,7 +72,12 @@ def build_qubex_target(
     qubit_count = len(qubit_labels)
     label_to_index = {label: index for index, label in enumerate(qubit_labels)}
     properties = _infer_qubit_properties(qubex, qubit_labels)
-    edges = _infer_coupling_map(qubex, label_to_index, coupling_map)
+    edges = _infer_coupling_map(
+        qubex,
+        label_to_index,
+        coupling_map,
+        instruction_durations=instruction_durations,
+    )
 
     target = Target(
         description=description,
@@ -71,7 +85,13 @@ def build_qubex_target(
         dt=dt,
         qubit_properties=properties,
     )
-    _add_operations(target, basis_gates or _DEFAULT_BASIS_GATES, qubit_count, edges)
+    _add_operations(
+        target,
+        basis_gates or _DEFAULT_BASIS_GATES,
+        qubit_count,
+        edges,
+        instruction_durations=instruction_durations,
+    )
     return target
 
 
@@ -144,6 +164,8 @@ def _infer_coupling_map(
     qubex: QubexTargetSource | None,
     label_to_index: dict[str, int],
     coupling_map: Iterable[tuple[int, int]] | None,
+    *,
+    instruction_durations: Mapping[str, Mapping[tuple[int, ...], float]] | None = None,
 ) -> list[tuple[int, int]]:
     if coupling_map is not None:
         return list(coupling_map)
@@ -169,6 +191,10 @@ def _infer_coupling_map(
                 a, b = label_to_index[labels[0]], label_to_index[labels[1]]
                 edges.add((a, b))
                 edges.add((b, a))
+    for gate_name in ("cx", "cz"):
+        for qarg in (instruction_durations or {}).get(gate_name, {}):
+            if len(qarg) == 2:
+                edges.add(qarg)
     return sorted(edges)
 
 
@@ -177,32 +203,57 @@ def _add_operations(
     basis_gates: Iterable[str],
     num_qubits: int,
     coupling_map: Sequence[tuple[int, int]],
+    *,
+    instruction_durations: Mapping[str, Mapping[tuple[int, ...], float]] | None = None,
 ) -> None:
-    one_qubit_props = {(qubit,): InstructionProperties() for qubit in range(num_qubits)}
-    two_qubit_props = {edge: InstructionProperties() for edge in coupling_map}
+    one_qubit_qargs = [(qubit,) for qubit in range(num_qubits)]
+    two_qubit_qargs = list(coupling_map)
     angle = Parameter("theta")
     duration = Parameter("duration")
 
     factories = {
-        "id": (lambda: IGate(), one_qubit_props),
-        "rz": (lambda: RZGate(angle), one_qubit_props),
-        "sx": (lambda: SXGate(), one_qubit_props),
-        "x": (lambda: XGate(), one_qubit_props),
-        "rx": (lambda: RXGate(angle), one_qubit_props),
-        "ry": (lambda: RYGate(angle), one_qubit_props),
-        "h": (lambda: HGate(), one_qubit_props),
-        "cx": (lambda: CXGate(), two_qubit_props),
-        "measure": (lambda: Measure(), one_qubit_props),
-        "reset": (lambda: Reset(), one_qubit_props),
-        "delay": (lambda: Delay(duration), one_qubit_props),
+        "id": (lambda: IGate(), one_qubit_qargs),
+        "rz": (lambda: RZGate(angle), one_qubit_qargs),
+        "s": (lambda: SGate(), one_qubit_qargs),
+        "sdg": (lambda: SdgGate(), one_qubit_qargs),
+        "sx": (lambda: SXGate(), one_qubit_qargs),
+        "sxdg": (lambda: SXdgGate(), one_qubit_qargs),
+        "x": (lambda: XGate(), one_qubit_qargs),
+        "y": (lambda: YGate(), one_qubit_qargs),
+        "rx": (lambda: RXGate(angle), one_qubit_qargs),
+        "ry": (lambda: RYGate(angle), one_qubit_qargs),
+        "h": (lambda: HGate(), one_qubit_qargs),
+        "cx": (lambda: CXGate(), two_qubit_qargs),
+        "cz": (lambda: CZGate(), two_qubit_qargs),
+        "measure": (lambda: Measure(), one_qubit_qargs),
+        "reset": (lambda: Reset(), one_qubit_qargs),
+        "delay": (lambda: Delay(duration), one_qubit_qargs),
     }
     for gate_name in basis_gates:
         if gate_name not in factories:
             raise ValueError(f"Unsupported basis gate {gate_name!r}.")
-        factory, props = factories[gate_name]
-        if gate_name == "cx" and not props:
+        factory, qargs = factories[gate_name]
+        if gate_name in {"cx", "cz"} and not qargs:
             continue
+        props = _instruction_properties(
+            gate_name,
+            qargs,
+            instruction_durations=instruction_durations,
+        )
         target.add_instruction(factory(), props, name=gate_name)
+
+
+def _instruction_properties(
+    gate_name: str,
+    qargs: Sequence[tuple[int, ...]],
+    *,
+    instruction_durations: Mapping[str, Mapping[tuple[int, ...], float]] | None,
+) -> dict[tuple[int, ...], InstructionProperties]:
+    durations = (instruction_durations or {}).get(gate_name, {})
+    return {
+        qarg: InstructionProperties(duration=durations.get(qarg))
+        for qarg in qargs
+    }
 
 
 def _parse_cr_target(target: Any) -> tuple[str, str] | None:

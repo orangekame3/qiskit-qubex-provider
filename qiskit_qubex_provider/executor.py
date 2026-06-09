@@ -10,6 +10,7 @@ from math import pi
 from typing import Any
 
 from qiskit.circuit import ClassicalRegister, QuantumCircuit, Qubit
+from qiskit.circuit import Delay as QiskitDelay
 from qiskit.result import Result
 
 from .job import QubexJob
@@ -87,51 +88,115 @@ class QubexPulseExecutor:
         """Convert a supported Qiskit circuit into a Qubex PulseSchedule."""
         pulse = self._pulse_source()
         pulse_schedule_cls = _import_pulse_schedule()
+        blank_cls = _import_blank()
+        op_start_times = _op_start_times(circuit)
+        channel_offsets: dict[str, float] = {
+            label: 0.0 for label in self._qubit_labels
+        }
         with pulse_schedule_cls(list(self._qubit_labels)) as schedule:
-            for instruction in circuit.data:
+            for index, instruction in enumerate(circuit.data):
                 operation = instruction.operation
                 name = operation.name
                 qubit_indices = [circuit.find_bit(qubit).index for qubit in instruction.qubits]
                 labels = [self._qubit_labels[index] for index in qubit_indices]
+                start_ns = (
+                    _time_to_ns(op_start_times[index], _circuit_time_unit(circuit), self._dt_seconds())
+                    if op_start_times is not None
+                    else None
+                )
 
-                if name in {"barrier", "delay"}:
+                if start_ns is not None and labels:
+                    self._align_channels(
+                        schedule,
+                        blank_cls,
+                        channel_offsets,
+                        labels,
+                        start_ns,
+                    )
+
+                if name == "barrier":
                     schedule.barrier(labels or None)
+                    self._sync_offsets_after_barrier(schedule, channel_offsets, labels)
+                elif name == "delay":
+                    delay_ns = _delay_duration_ns(operation, self._dt_seconds())
+                    for label in labels:
+                        if delay_ns > 0:
+                            schedule.add(label, blank_cls(delay_ns))
+                        channel_offsets[label] = channel_offsets.get(label, 0.0) + delay_ns
                 elif name == "measure":
                     continue
                 elif name in {"id", "reset"}:
                     continue
                 elif name == "x":
-                    schedule.add(labels[0], pulse.x180(labels[0]))
+                    waveform = pulse.x180(labels[0])
+                    schedule.add(labels[0], waveform)
+                    self._advance_offsets(channel_offsets, labels, _duration_ns(waveform))
                 elif name == "sx":
-                    schedule.add(labels[0], pulse.x90(labels[0]))
+                    waveform = pulse.x90(labels[0])
+                    schedule.add(labels[0], waveform)
+                    self._advance_offsets(channel_offsets, labels, _duration_ns(waveform))
                 elif name == "sxdg":
-                    schedule.add(labels[0], pulse.x90m(labels[0]))
+                    waveform = pulse.x90m(labels[0])
+                    schedule.add(labels[0], waveform)
+                    self._advance_offsets(channel_offsets, labels, _duration_ns(waveform))
                 elif name == "y":
-                    schedule.add(labels[0], pulse.y180(labels[0]))
+                    waveform = pulse.y180(labels[0])
+                    schedule.add(labels[0], waveform)
+                    self._advance_offsets(channel_offsets, labels, _duration_ns(waveform))
                 elif name == "h":
-                    schedule.add(labels[0], pulse.hadamard(labels[0]))
+                    waveform = pulse.hadamard(labels[0])
+                    schedule.add(labels[0], waveform)
+                    self._advance_offsets(channel_offsets, labels, _duration_ns(waveform))
                 elif name == "s":
                     schedule.add(labels[0], pulse.z90())
                 elif name == "sdg":
-                    schedule.add(labels[0], pulse.z90().__class__(-pi / 2))
+                    schedule.add(labels[0], self._virtual_z(-pi / 2))
                 elif name == "z":
                     schedule.add(labels[0], pulse.z180())
                 elif name == "rz":
-                    schedule.add(labels[0], pulse.z90().__class__(float(operation.params[0])))
+                    schedule.add(labels[0], self._virtual_z(float(operation.params[0])))
                 elif name == "rx":
-                    self._add_rx(schedule, pulse, labels[0], float(operation.params[0]))
+                    duration_ns = self._add_rx(schedule, pulse, labels[0], float(operation.params[0]))
+                    self._advance_offsets(channel_offsets, labels, duration_ns)
                 elif name == "ry":
-                    self._add_ry(schedule, pulse, labels[0], float(operation.params[0]))
+                    duration_ns = self._add_ry(schedule, pulse, labels[0], float(operation.params[0]))
+                    self._advance_offsets(channel_offsets, labels, duration_ns)
                 elif name == "cx":
-                    schedule.call(pulse.cx(labels[0], labels[1]))
+                    sub_schedule = pulse.cx(labels[0], labels[1])
+                    schedule.call(sub_schedule)
+                    self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
                 elif name == "cz":
-                    schedule.call(pulse.cz(labels[0], labels[1]))
+                    sub_schedule = pulse.cz(labels[0], labels[1])
+                    schedule.call(sub_schedule)
+                    self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
                 else:
                     raise ValueError(
                         f"Unsupported Qiskit instruction {name!r} for Qubex pulse execution. "
                         "Transpile to the backend target or provide a custom executor."
                     )
         return schedule
+
+    def instruction_durations_seconds(self) -> dict[str, dict[tuple[int, ...], float]]:
+        """Infer Qiskit Target instruction durations from calibrated Qubex pulses."""
+        pulse = self._pulse_source()
+        durations: dict[str, dict[tuple[int, ...], float]] = {}
+        for index, label in enumerate(self._qubit_labels):
+            qarg = (index,)
+            self._set_duration(durations, "x", qarg, _duration_seconds_safe(lambda: pulse.x180(label)))
+            self._set_duration(durations, "sx", qarg, _duration_seconds_safe(lambda: pulse.x90(label)))
+            self._set_duration(durations, "sxdg", qarg, _duration_seconds_safe(lambda: pulse.x90m(label)))
+            self._set_duration(durations, "y", qarg, _duration_seconds_safe(lambda: pulse.y180(label)))
+            self._set_duration(durations, "h", qarg, _duration_seconds_safe(lambda: pulse.hadamard(label)))
+            for virtual_gate in ("id", "rz", "s", "sdg", "z", "reset", "measure"):
+                self._set_duration(durations, virtual_gate, qarg, 0.0)
+        for control, control_label in enumerate(self._qubit_labels):
+            for target, target_label in enumerate(self._qubit_labels):
+                if control == target:
+                    continue
+                qarg = (control, target)
+                self._set_duration(durations, "cx", qarg, _duration_seconds_safe(lambda c=control_label, t=target_label: pulse.cx(c, t)))
+                self._set_duration(durations, "cz", qarg, _duration_seconds_safe(lambda c=control_label, t=target_label: pulse.cz(c, t)))
+        return durations
 
     def _execute_circuit(
         self,
@@ -283,31 +348,110 @@ class QubexPulseExecutor:
             "Pass a configured qubex.Experiment instance or a custom executor."
         )
 
+    def _virtual_z(self, theta: float) -> Any:
+        return self._pulse_source().z90().__class__(theta)
+
     @staticmethod
-    def _add_rx(schedule: Any, pulse: Any, target: str, theta: float) -> None:
+    def _set_duration(
+        durations: dict[str, dict[tuple[int, ...], float]],
+        name: str,
+        qarg: tuple[int, ...],
+        duration: float | None,
+    ) -> None:
+        if duration is not None:
+            durations.setdefault(name, {})[qarg] = duration
+
+    @staticmethod
+    def _add_rx(schedule: Any, pulse: Any, target: str, theta: float) -> float:
         if _is_close(theta, pi):
-            schedule.add(target, pulse.x180(target))
+            waveform = pulse.x180(target)
+            schedule.add(target, waveform)
+            return _duration_ns(waveform)
         elif _is_close(theta, pi / 2):
-            schedule.add(target, pulse.x90(target))
+            waveform = pulse.x90(target)
+            schedule.add(target, waveform)
+            return _duration_ns(waveform)
         elif _is_close(theta, -pi / 2):
-            schedule.add(target, pulse.x90m(target))
+            waveform = pulse.x90m(target)
+            schedule.add(target, waveform)
+            return _duration_ns(waveform)
         elif _is_close(theta, 0):
-            return
+            return 0.0
         else:
             raise ValueError("QubexPulseExecutor supports rx angles of 0, +/-pi/2, and pi.")
 
     @staticmethod
-    def _add_ry(schedule: Any, pulse: Any, target: str, theta: float) -> None:
+    def _add_ry(schedule: Any, pulse: Any, target: str, theta: float) -> float:
         if _is_close(theta, pi):
-            schedule.add(target, pulse.y180(target))
+            waveform = pulse.y180(target)
+            schedule.add(target, waveform)
+            return _duration_ns(waveform)
         elif _is_close(theta, pi / 2):
-            schedule.add(target, pulse.y90(target))
+            waveform = pulse.y90(target)
+            schedule.add(target, waveform)
+            return _duration_ns(waveform)
         elif _is_close(theta, -pi / 2):
-            schedule.add(target, pulse.y90m(target))
+            waveform = pulse.y90m(target)
+            schedule.add(target, waveform)
+            return _duration_ns(waveform)
         elif _is_close(theta, 0):
-            return
+            return 0.0
         else:
             raise ValueError("QubexPulseExecutor supports ry angles of 0, +/-pi/2, and pi.")
+
+    @staticmethod
+    def _align_channels(
+        schedule: Any,
+        blank_cls: type,
+        channel_offsets: dict[str, float],
+        labels: Sequence[str],
+        start_ns: float,
+    ) -> None:
+        for label in labels:
+            offset = channel_offsets.get(label, 0.0)
+            delta = start_ns - offset
+            if delta < -1e-9:
+                raise ValueError(
+                    f"Scheduled operation starts at {start_ns} ns on {label}, "
+                    f"but the Qubex channel is already at {offset} ns."
+                )
+            if delta > 1e-9:
+                schedule.add(label, blank_cls(delta))
+                channel_offsets[label] = start_ns
+
+    @staticmethod
+    def _advance_offsets(
+        channel_offsets: dict[str, float],
+        labels: Sequence[str],
+        duration_ns: float,
+    ) -> None:
+        for label in labels:
+            channel_offsets[label] = channel_offsets.get(label, 0.0) + duration_ns
+
+    @staticmethod
+    def _advance_offsets_for_schedule(
+        channel_offsets: dict[str, float],
+        schedule: Any,
+    ) -> None:
+        labels = getattr(schedule, "labels", [])
+        start = max((channel_offsets.get(label, 0.0) for label in labels), default=0.0)
+        duration = _duration_ns(schedule)
+        for label in labels:
+            channel_offsets[label] = start + duration
+
+    @staticmethod
+    def _sync_offsets_after_barrier(
+        schedule: Any,
+        channel_offsets: dict[str, float],
+        labels: Sequence[str],
+    ) -> None:
+        selected = labels or list(getattr(schedule, "labels", []))
+        barrier_time = max(
+            (channel_offsets.get(label, 0.0) for label in selected),
+            default=0.0,
+        )
+        for label in selected:
+            channel_offsets[label] = barrier_time
 
     @staticmethod
     def _infer_qubit_labels(qubex: Any) -> tuple[str, ...]:
@@ -333,6 +477,28 @@ class QubexPulseExecutor:
                 )
         return ()
 
+    def _dt_seconds(self) -> float:
+        return self.dt_seconds()
+
+    def dt_seconds(self) -> float:
+        """Return the Qubex sampling period in seconds for Qiskit scheduling."""
+        dt = getattr(self._qubex, "dt", None)
+        if dt is not None:
+            return float(dt)
+        measurement = getattr(self._qubex, "measurement", None)
+        sampling_period = getattr(measurement, "sampling_period", None)
+        if sampling_period is not None:
+            return float(sampling_period) * 1e-9
+        ctx = getattr(self._qubex, "ctx", None)
+        ctx_measurement = getattr(ctx, "measurement", None)
+        sampling_period = getattr(ctx_measurement, "sampling_period", None)
+        if sampling_period is not None:
+            return float(sampling_period) * 1e-9
+        qxpulse_sampling_period = _qxpulse_default_sampling_period_ns()
+        if qxpulse_sampling_period is not None:
+            return qxpulse_sampling_period * 1e-9
+        return 1e-9
+
 
 def _normalize_circuits(run_input: Any) -> list[QuantumCircuit]:
     if isinstance(run_input, QuantumCircuit):
@@ -352,6 +518,75 @@ def _import_pulse_schedule() -> type:
             "QubexPulseExecutor requires qxpulse/qubex to be installed."
         ) from exc
     return PulseSchedule
+
+
+def _import_blank() -> type:
+    try:
+        from qxpulse import Blank
+    except ImportError as exc:
+        raise ImportError(
+            "QubexPulseExecutor requires qxpulse/qubex to be installed."
+        ) from exc
+    return Blank
+
+
+def _op_start_times(circuit: QuantumCircuit) -> list[float] | None:
+    try:
+        start_times = circuit.op_start_times
+    except AttributeError:
+        return None
+    if start_times is None:
+        return None
+    return list(start_times)
+
+
+def _circuit_time_unit(circuit: QuantumCircuit) -> str:
+    return getattr(circuit, "_unit", None) or getattr(circuit, "unit", "dt")
+
+
+def _time_to_ns(value: float, unit: str, dt_seconds: float) -> float:
+    if unit == "dt":
+        return float(value) * dt_seconds * 1e9
+    if unit == "s":
+        return float(value) * 1e9
+    if unit == "ms":
+        return float(value) * 1e6
+    if unit == "us":
+        return float(value) * 1e3
+    if unit == "ns":
+        return float(value)
+    raise ValueError(f"Unsupported Qiskit time unit {unit!r}.")
+
+
+def _delay_duration_ns(operation: Any, dt_seconds: float) -> float:
+    if not isinstance(operation, QiskitDelay) and operation.name != "delay":
+        return 0.0
+    return _time_to_ns(operation.duration, operation.unit, dt_seconds)
+
+
+def _duration_ns(obj: Any) -> float:
+    duration = getattr(obj, "cached_duration", None)
+    if duration is None:
+        duration = getattr(obj, "duration", None)
+    if duration is None:
+        return 0.0
+    return float(duration)
+
+
+def _duration_seconds_safe(factory: Any) -> float | None:
+    try:
+        obj = factory()
+    except Exception:
+        return None
+    return _duration_ns(obj) * 1e-9
+
+
+def _qxpulse_default_sampling_period_ns() -> float | None:
+    try:
+        from qxpulse.waveform import DEFAULT_SAMPLING_PERIOD
+    except ImportError:
+        return None
+    return float(DEFAULT_SAMPLING_PERIOD)
 
 
 def _circuit_header(circuit: QuantumCircuit) -> dict[str, Any]:
