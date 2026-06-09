@@ -592,6 +592,51 @@ def test_transpile_scheduling_uses_qubex_target_durations() -> None:
     assert scheduled.op_start_times is not None
 
 
+def test_independent_cx_operations_are_scheduled_in_parallel(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1", "Q2", "Q3")
+        dt = 2e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        coupling_map=[(0, 1), (2, 3)],
+    ).get_backend()
+    circuit = QuantumCircuit(4, 4)
+    circuit.cx(0, 1)
+    circuit.cx(2, 3)
+    circuit.measure([0, 1, 2, 3], [0, 1, 2, 3])
+
+    scheduled = transpile(circuit, backend, scheduling_method="asap")
+
+    cx_starts = [
+        start
+        for instruction, start in zip(scheduled.data, scheduled.op_start_times)
+        if instruction.operation.name == "cx"
+    ]
+    assert cx_starts == [0, 0]
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    schedule = QubexPulseExecutor(FakeExperiment()).build_schedule(scheduled)
+    calls = [op for op in schedule.ops if op[0] == "call"]
+
+    assert len(calls) == 2
+    assert calls[0][1].labels == ["Q0", "Q1", "Q0-Q1"]
+    assert calls[1][1].labels == ["Q2", "Q3", "Q2-Q3"]
+    assert not [
+        op for op in schedule.ops
+        if op[0] == "add" and op[1] in {"Q2", "Q3"} and op[2].name == "blank"
+    ]
+
+
 def test_transpile_scheduling_decomposes_parameterized_rotations() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
