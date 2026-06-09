@@ -16,7 +16,7 @@ from .executor import QubexPulseExecutor
 from .job import QubexJob
 from .provider import QubexProvider
 from .sampler import QubexSamplerV2
-from .target import build_qubex_target
+from .target import QUBEX_NATIVE_BASIS_GATES, build_qubex_target
 
 __all__ = [
     "QubexBackend",
@@ -25,6 +25,7 @@ __all__ = [
     "QubexPulseExecutor",
     "QubexProvider",
     "QubexSamplerV2",
+    "QUBEX_NATIVE_BASIS_GATES",
     "build_device_topology",
     "build_dynamical_decoupling_pass_manager",
     "build_topology_aware_dynamical_decoupling_pass_manager",

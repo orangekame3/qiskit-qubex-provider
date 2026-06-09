@@ -16,6 +16,7 @@ from qiskit_qubex_provider import (
     QubexPulseExecutor,
     QubexProvider,
     QubexSamplerV2,
+    QUBEX_NATIVE_BASIS_GATES,
     build_device_topology,
     build_dynamical_decoupling_pass_manager,
     build_topology_aware_dynamical_decoupling_pass_manager,
@@ -64,6 +65,14 @@ class DurationPulse:
 
     def readout(self, target):
         return DurationObject(f"readout-{target}", 20)
+
+    def zx90(self, control, target, *, echo=True):
+        suffix = "echo" if echo else "direct"
+        return DurationSchedule(
+            [control, target, f"{control}-{target}"],
+            duration=24,
+            ops=[("zx90", control, target, suffix)],
+        )
 
     def cx(self, control, target):
         return DurationSchedule(
@@ -192,6 +201,7 @@ def test_target_uses_device_topology_metadata() -> None:
     assert target.qubit_properties[0].t1 == pytest.approx(25e-6)
     assert target["sx"][(0,)].duration == pytest.approx(16e-9)
     assert target["measure"][(0,)].duration == pytest.approx(120e-9)
+    assert target["ecr"][(0, 1)].duration == pytest.approx(272e-9)
     assert target["cx"][(0, 1)].duration == pytest.approx(272e-9)
 
 
@@ -301,6 +311,7 @@ def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
 
     backend = QubexProvider.from_device_topology(topology).get_backend()
     assert backend.target["sx"][(0,)].duration == pytest.approx(16e-9)
+    assert backend.target["ecr"][(0, 1)].duration == pytest.approx(272e-9)
     assert backend.target["cx"][(0, 1)].duration == pytest.approx(272e-9)
 
 
@@ -573,9 +584,62 @@ def test_provider_from_experiment_populates_target_durations() -> None:
     assert backend.target["x"][(0,)].duration == pytest.approx(8e-9)
     assert backend.target["sx"][(0,)].duration == pytest.approx(4e-9)
     assert backend.target["h"][(0,)].duration == pytest.approx(12e-9)
+    assert backend.target["ecr"][(0, 1)].duration == pytest.approx(24e-9)
     assert backend.target["cx"][(0, 1)].duration == pytest.approx(24e-9)
     assert backend.target["measure"][(0,)].duration == pytest.approx(20e-9)
     assert backend.target["rz"][(0,)].duration == 0.0
+
+
+def test_native_basis_target_exposes_ecr_without_cx_cz() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        coupling_map=[(0, 1)],
+        basis_gates=QUBEX_NATIVE_BASIS_GATES,
+    ).get_backend()
+
+    assert "ecr" in backend.target.operation_names
+    assert "cx" not in backend.target.operation_names
+    assert "cz" not in backend.target.operation_names
+    assert backend.target["ecr"][(0, 1)].duration == pytest.approx(24e-9)
+
+
+def test_native_basis_transpiles_cx_to_ecr() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        coupling_map=[(0, 1)],
+        basis_gates=QUBEX_NATIVE_BASIS_GATES,
+    ).get_backend()
+    circuit = QuantumCircuit(2)
+    circuit.cx(0, 1)
+
+    transpiled = transpile(circuit, backend, optimization_level=1)
+
+    assert "cx" not in transpiled.count_ops()
+    assert "ecr" in transpiled.count_ops()
 
 
 def test_provider_from_experiment_can_use_device_topology_target() -> None:
@@ -722,6 +786,33 @@ def test_provider_from_experiment_config_keeps_experiment_label_inference(monkey
     assert backend._executor.qubit_labels == ("Q00", "Q01")
 
 
+def test_provider_from_experiment_config_forwards_backend_basis_gates(monkeypatch) -> None:
+    class FakeExperiment:
+        dt = 1e-9
+
+        def __init__(self, *, system_id, chip_id, qubits, **options):
+            assert "basis_gates" not in options
+            self.qubit_labels = tuple(f"Q0{qubit}" for qubit in qubits)
+            self.pulse = DurationPulse()
+            self.measurement_service = SimpleNamespace(execute=lambda **kwargs: None)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "qubex",
+        SimpleNamespace(Experiment=FakeExperiment),
+    )
+
+    backend = QubexProvider.from_experiment_config(
+        system_id="system",
+        qubits=[0, 1],
+        coupling_map=[(0, 1)],
+        basis_gates=QUBEX_NATIVE_BASIS_GATES,
+    ).get_backend()
+
+    assert "ecr" in backend.target.operation_names
+    assert "cx" not in backend.target.operation_names
+
+
 def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0", "Q1")
@@ -766,6 +857,25 @@ def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
     assert rq1_ops[0][2].name == "blank"
     assert rq1_ops[0][2].duration == pytest.approx(25)
     assert rq1_ops[1][2].name == "readout-Q1"
+
+
+def test_qubex_executor_converts_ecr_to_echoed_zx90(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(2)
+    circuit.ecr(0, 1)
+
+    schedule = QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+    calls = [op for op in schedule.ops if op[0] == "call"]
+    assert len(calls) == 1
+    assert calls[0][1].ops == [("zx90", "Q0", "Q1", "echo")]
 
 
 def test_qubex_executor_supports_mid_circuit_measurement_without_feedback(monkeypatch) -> None:
