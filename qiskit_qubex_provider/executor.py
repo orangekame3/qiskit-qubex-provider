@@ -236,8 +236,29 @@ class QubexPulseExecutor:
         shots: int,
         options: Mapping[str, Any],
     ) -> QubexCircuitExecution:
+        execute_options = self._execution_options(
+            circuit,
+            options=options,
+            shots=shots,
+        )
         measured_targets, target_to_clbit = self._measurement_mapping(circuit)
         schedule = self.build_schedule(circuit)
+        raw_result = self._execute_source().execute(schedule=schedule, **execute_options)
+        return QubexCircuitExecution(
+            circuit=circuit,
+            schedule=schedule,
+            raw_result=raw_result,
+            measured_targets=tuple(measured_targets),
+            target_to_clbit=target_to_clbit,
+        )
+
+    def _execution_options(
+        self,
+        circuit: QuantumCircuit,
+        *,
+        options: Mapping[str, Any],
+        shots: int,
+    ) -> dict[str, Any]:
         execute_options = dict(self._execute_options)
         execute_options.update(options)
         execute_options.setdefault("state_classification", True)
@@ -266,14 +287,7 @@ class QubexPulseExecutor:
         execute_options.setdefault("plot", False)
         execute_options["plot"] = _bool_option("plot", execute_options["plot"])
         execute_options["n_shots"] = shots
-        raw_result = self._execute_source().execute(schedule=schedule, **execute_options)
-        return QubexCircuitExecution(
-            circuit=circuit,
-            schedule=schedule,
-            raw_result=raw_result,
-            measured_targets=tuple(measured_targets),
-            target_to_clbit=target_to_clbit,
-        )
+        return execute_options
 
     def _measurement_mapping(
         self,
