@@ -23,8 +23,8 @@ class QubexCircuitExecution:
     circuit: QuantumCircuit
     schedule: Any
     raw_result: Any
-    measured_targets: tuple[str, ...]
-    target_to_clbit: Mapping[str, int]
+    measured_targets: tuple[str | tuple[str, int], ...]
+    target_to_clbit: Mapping[str | tuple[str, int], int]
 
 
 class QubexPulseExecutor:
@@ -86,6 +86,7 @@ class QubexPulseExecutor:
 
     def build_schedule(self, circuit: QuantumCircuit) -> Any:
         """Convert a supported Qiskit circuit into a Qubex PulseSchedule."""
+        self._validate_static_circuit(circuit)
         pulse = self._pulse_source()
         pulse_schedule_cls = _import_pulse_schedule()
         blank_cls = _import_blank()
@@ -124,7 +125,20 @@ class QubexPulseExecutor:
                             schedule.add(label, blank_cls(delay_ns))
                         channel_offsets[label] = channel_offsets.get(label, 0.0) + delay_ns
                 elif name == "measure":
-                    continue
+                    readout_label = self._readout_label(labels[0])
+                    if start_ns is not None:
+                        self._align_channels(
+                            schedule,
+                            blank_cls,
+                            channel_offsets,
+                            [readout_label],
+                            start_ns,
+                        )
+                    waveform = pulse.readout(labels[0])
+                    schedule.add(readout_label, waveform)
+                    duration_ns = _duration_ns(waveform)
+                    self._advance_offsets(channel_offsets, [readout_label], duration_ns)
+                    self._advance_offsets(channel_offsets, labels, duration_ns)
                 elif name in {"id", "reset"}:
                     continue
                 elif name == "x":
@@ -187,7 +201,8 @@ class QubexPulseExecutor:
             self._set_duration(durations, "sxdg", qarg, _duration_seconds_safe(lambda: pulse.x90m(label)))
             self._set_duration(durations, "y", qarg, _duration_seconds_safe(lambda: pulse.y180(label)))
             self._set_duration(durations, "h", qarg, _duration_seconds_safe(lambda: pulse.hadamard(label)))
-            for virtual_gate in ("id", "rz", "s", "sdg", "z", "reset", "measure"):
+            self._set_duration(durations, "measure", qarg, _duration_seconds_safe(lambda: pulse.readout(label)))
+            for virtual_gate in ("id", "rz", "s", "sdg", "z", "reset"):
                 self._set_duration(durations, virtual_gate, qarg, 0.0)
         for control, control_label in enumerate(self._qubit_labels):
             for target, target_label in enumerate(self._qubit_labels):
@@ -210,7 +225,7 @@ class QubexPulseExecutor:
         execute_options = dict(self._execute_options)
         execute_options.update(options)
         execute_options.setdefault("state_classification", True)
-        execute_options.setdefault("final_measurement", True)
+        execute_options.setdefault("final_measurement", not _has_explicit_measurements(circuit))
         execute_options.setdefault("plot", False)
         execute_options["n_shots"] = shots
         raw_result = self._execute_source().execute(schedule=schedule, **execute_options)
@@ -225,26 +240,22 @@ class QubexPulseExecutor:
     def _measurement_mapping(
         self,
         circuit: QuantumCircuit,
-    ) -> tuple[list[str], dict[str, int]]:
-        measured_targets: list[str] = []
-        target_to_clbit: dict[str, int] = {}
-        seen_non_measure_after_measure = False
-        measurement_started = False
+    ) -> tuple[list[str | tuple[str, int]], dict[str | tuple[str, int], int]]:
+        self._validate_static_circuit(circuit)
+        measured_targets: list[str | tuple[str, int]] = []
+        target_to_clbit: dict[str | tuple[str, int], int] = {}
+        capture_counts: dict[str, int] = {}
         for instruction in circuit.data:
             name = instruction.operation.name
             if name == "measure":
-                measurement_started = True
-                if len(instruction.qubits) != 1 or len(instruction.clbits) != 1:
-                    raise ValueError("Only one-qubit Qiskit measurements are supported.")
                 qubit_index = circuit.find_bit(instruction.qubits[0]).index
                 clbit_index = circuit.find_bit(instruction.clbits[0]).index
                 target = self._qubit_labels[qubit_index]
-                measured_targets.append(target)
-                target_to_clbit[target] = clbit_index
-            elif measurement_started and name not in {"barrier", "delay"}:
-                seen_non_measure_after_measure = True
-        if seen_non_measure_after_measure:
-            raise ValueError("Mid-circuit measurement is not supported by QubexPulseExecutor.")
+                capture_index = capture_counts.get(target, 0)
+                capture_counts[target] = capture_index + 1
+                measured_target = (target, capture_index)
+                measured_targets.append(measured_target)
+                target_to_clbit[measured_target] = clbit_index
         if not measured_targets:
             measured_targets = list(self._qubit_labels[: circuit.num_qubits])
             target_to_clbit = {
@@ -348,8 +359,59 @@ class QubexPulseExecutor:
             "Pass a configured qubex.Experiment instance or a custom executor."
         )
 
+    @staticmethod
+    def _validate_static_circuit(circuit: QuantumCircuit) -> None:
+        active_operations_started = False
+        measurement_started = False
+        measured_clbits: set[int] = set()
+        for instruction in circuit.data:
+            operation = instruction.operation
+            name = operation.name
+            if getattr(operation, "condition", None) is not None or name in {
+                "if_else",
+                "while_loop",
+                "for_loop",
+                "switch_case",
+            }:
+                raise ValueError(
+                    "Classically controlled or dynamic Qiskit circuits are not "
+                    "supported by QubexPulseExecutor."
+                )
+            if name == "measure":
+                measurement_started = True
+                if len(instruction.qubits) != 1 or len(instruction.clbits) != 1:
+                    raise ValueError("Only one-qubit Qiskit measurements are supported.")
+                clbit = circuit.find_bit(instruction.clbits[0]).index
+                if clbit in measured_clbits:
+                    raise ValueError("Multiple measurements into the same clbit are not supported.")
+                measured_clbits.add(clbit)
+            elif name == "reset":
+                if active_operations_started or measurement_started:
+                    raise ValueError("Mid-circuit reset is not supported by QubexPulseExecutor.")
+            elif name not in {"barrier", "delay"}:
+                active_operations_started = True
+
     def _virtual_z(self, theta: float) -> Any:
         return self._pulse_source().z90().__class__(theta)
+
+    def _readout_label(self, target: str) -> str:
+        for source in (
+            self._qubex,
+            getattr(self._qubex, "experiment_system", None),
+            getattr(self._qubex, "ctx", None),
+            getattr(self._qubex, "context", None),
+            getattr(self._qubex, "target_registry", None),
+        ):
+            resolver = getattr(source, "resolve_read_label", None)
+            if resolver is None:
+                continue
+            try:
+                return str(resolver(target, allow_legacy=True))
+            except TypeError:
+                return str(resolver(target))
+            except ValueError:
+                continue
+        return f"R{target}"
 
     @staticmethod
     def _set_duration(
@@ -538,6 +600,10 @@ def _op_start_times(circuit: QuantumCircuit) -> list[float] | None:
     if start_times is None:
         return None
     return list(start_times)
+
+
+def _has_explicit_measurements(circuit: QuantumCircuit) -> bool:
+    return any(instruction.operation.name == "measure" for instruction in circuit.data)
 
 
 def _circuit_time_unit(circuit: QuantumCircuit) -> str:

@@ -92,9 +92,11 @@ scheduled = transpile(circuit, backend, scheduling_method="alap")
 
 Scheduled Qiskit operation start times are preserved when building the Qubex
 `PulseSchedule`: idle time and Qiskit `delay` instructions become Qubex
-`Blank` pulses. `rz`, `s`, `sdg`, and `z` are emitted as zero-duration
-`VirtualZ` frame shifts, so Qubex/qxpulse frame tracking remains responsible
-for applying them to later physical pulses.
+`Blank` pulses. Qiskit `measure` instructions become Qubex readout pulses at
+their circuit positions, and classified pulse-aligned captures are mapped back
+to the requested Qiskit clbits. `rz`, `s`, `sdg`, and `z` are emitted as
+zero-duration `VirtualZ` frame shifts, so Qubex/qxpulse frame tracking remains
+responsible for applying them to later physical pulses.
 
 For simple setup code, the provider can create the `Experiment` for you. Device
 connection is opt-in:
@@ -117,6 +119,12 @@ hardware paths, pass an object implementing `run(circuits, **options)` as
 
 `QubexPulseExecutor` currently supports the calibrated gate-level subset
 `id`, `x`, `sx`, `sxdg`, `y`, `h`, `s`, `sdg`, `z`, `rx(0|+/-pi/2|pi)`,
-`ry(0|+/-pi/2|pi)`, `rz(theta)`, `cx`, `cz`, `barrier`, `delay`, and terminal
-measurements. Unsupported circuits should be transpiled to this target or run
-through a custom executor.
+`ry(0|+/-pi/2|pi)`, `rz(theta)`, `cx`, `cz`, `barrier`, `delay`, and
+measurements without same-shot classical feedback. Unsupported circuits should
+be transpiled to this target or run through a custom executor.
+
+Same-shot feedback is not supported by the built-in Qubex pulse executor yet.
+That includes measurement-conditioned gates and control-flow operations such as
+`if_else`. Initial reset operations are accepted as no-ops under the usual
+shot-initialization assumption, but any reset after an active operation is
+rejected.
