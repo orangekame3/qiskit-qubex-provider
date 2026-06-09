@@ -188,6 +188,7 @@ class QubexPulseExecutor:
                         f"Unsupported Qiskit instruction {name!r} for Qubex pulse execution. "
                         "Transpile to the backend target or provide a custom executor."
                     )
+        self._validate_resource_constraints(schedule)
         return schedule
 
     def instruction_durations_seconds(self) -> dict[str, dict[tuple[int, ...], float]]:
@@ -412,6 +413,66 @@ class QubexPulseExecutor:
             except ValueError:
                 continue
         return f"R{target}"
+
+    def _validate_resource_constraints(self, schedule: Any) -> None:
+        get_pulse_ranges = getattr(schedule, "get_pulse_ranges", None)
+        if get_pulse_ranges is None:
+            return
+        resource_windows: dict[str, list[tuple[int, int, str]]] = {}
+        for label, ranges in get_pulse_ranges().items():
+            resource_key = self._resource_key(label)
+            if resource_key is None:
+                continue
+            for pulse_range in ranges:
+                if pulse_range.start == pulse_range.stop:
+                    continue
+                resource_windows.setdefault(resource_key, []).append(
+                    (pulse_range.start, pulse_range.stop, label)
+                )
+        for resource_key, windows in resource_windows.items():
+            windows.sort()
+            previous: tuple[int, int, str] | None = None
+            for current in windows:
+                if previous is not None and current[0] < previous[1]:
+                    raise ValueError(
+                        "Qubex resource conflict: "
+                        f"channels {previous[2]!r} and {current[2]!r} overlap "
+                        f"on hardware resource {resource_key!r}."
+                    )
+                previous = current
+
+    def _resource_key(self, label: str) -> str | None:
+        target = self._target_metadata(label)
+        channel = getattr(target, "channel", None)
+        if channel is None:
+            return None
+        channel_id = getattr(channel, "id", None)
+        if channel_id is not None:
+            return str(channel_id)
+        port = getattr(channel, "port", None)
+        port_id = getattr(port, "id", None)
+        number = getattr(channel, "number", None)
+        if port_id is not None and number is not None:
+            return f"{port_id}:{number}"
+        return None
+
+    def _target_metadata(self, label: str) -> Any | None:
+        for source in (
+            self._qubex,
+            getattr(self._qubex, "experiment_system", None),
+            getattr(self._qubex, "ctx", None),
+            getattr(self._qubex, "context", None),
+            getattr(self._qubex, "target_registry", None),
+        ):
+            for method_name in ("get_target", "get_read_out_target", "get_cap_target"):
+                resolver = getattr(source, method_name, None)
+                if resolver is None:
+                    continue
+                try:
+                    return resolver(label)
+                except (KeyError, ValueError):
+                    continue
+        return None
 
     @staticmethod
     def _set_duration(
