@@ -304,7 +304,10 @@ class QubexPulseExecutor:
                     "success": True,
                     "status": "DONE",
                     "name": circuit.name,
-                    "header": _circuit_header(circuit),
+                    "header": _circuit_header(
+                        circuit,
+                        memory_slots=_memory_slots(execution),
+                    ),
                     "data": data,
                 }
             )
@@ -838,11 +841,22 @@ def _qxpulse_default_sampling_period_ns() -> float | None:
     return float(DEFAULT_SAMPLING_PERIOD)
 
 
-def _circuit_header(circuit: QuantumCircuit) -> dict[str, Any]:
+def _memory_slots(execution: QubexCircuitExecution) -> int:
+    return max(
+        [execution.circuit.num_clbits]
+        + [index + 1 for index in execution.target_to_clbit.values()]
+    )
+
+
+def _circuit_header(
+    circuit: QuantumCircuit,
+    *,
+    memory_slots: int | None = None,
+) -> dict[str, Any]:
     return {
         "name": circuit.name,
         "n_qubits": circuit.num_qubits,
-        "memory_slots": circuit.num_clbits,
+        "memory_slots": circuit.num_clbits if memory_slots is None else memory_slots,
         "qreg_sizes": [[reg.name, reg.size] for reg in circuit.qregs],
         "creg_sizes": [
             [reg.name, reg.size]
