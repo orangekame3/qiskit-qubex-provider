@@ -736,6 +736,60 @@ def test_qubex_executor_rejects_count_total_mismatch(monkeypatch) -> None:
         backend.run(circuit, shots=5).result()
 
 
+def test_qubex_executor_accepts_integer_string_counts(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return {"counts": {"1": "3", "0": "2"}}
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    result = backend.run(circuit, shots=5).result()
+
+    assert result.get_counts() == {"1": 3, "0": 2}
+
+
+@pytest.mark.parametrize("count", [2.5, -1, True, "2.5"])
+def test_qubex_executor_rejects_invalid_count_values(count, monkeypatch) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return {"counts": {"1": count, "0": 2}}
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    with pytest.raises(ValueError, match="non-negative integers"):
+        backend.run(circuit, shots=5).result()
+
+
 def test_qubex_executor_rejects_memory_length_mismatch(monkeypatch) -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
