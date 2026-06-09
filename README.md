@@ -40,7 +40,7 @@ backend = provider.get_backend()
 
 The provider reads `qubits`, `couplings`, qubit lifetimes, and gate durations
 from the topology file. Coupling `gate_duration.rzx90` is exposed as the
-scheduled two-qubit duration for `cx`/`cz`.
+scheduled two-qubit duration for native `ecr` and compatibility `cx`/`cz`.
 
 If you have Qubex calibration files but not a generated Device Gateway topology
 file yet, the provider can generate one from `calib_note.json` and the Qubex
@@ -130,6 +130,26 @@ Qubex:
 scheduled = transpile(circuit, backend, scheduling_method="asap")
 scheduled = transpile(circuit, backend, scheduling_method="alap")
 ```
+
+Qubex's native two-qubit pulse is echoed cross-resonance. For production
+transpilation that should target the native Qubex gate set, use
+`QUBEX_NATIVE_BASIS_GATES`; Qiskit will decompose `cx` into `ecr` plus
+single-qubit gates:
+
+```python
+from qiskit_qubex_provider import QUBEX_NATIVE_BASIS_GATES
+
+provider = QubexProvider.from_experiment(
+    exp,
+    device_topology="device-topology.json",
+    basis_gates=QUBEX_NATIVE_BASIS_GATES,
+)
+backend = provider.get_backend()
+native = transpile(circuit, backend, optimization_level=1)
+```
+
+The default target still exposes `cx`/`cz` for compatibility. During execution,
+Qiskit `ecr` instructions are emitted as Qubex echoed `zx90` pulse schedules.
 
 For generic dynamical decoupling, build a DD pass manager from the same backend
 target after layout/routing has mapped the circuit to physical qubits:

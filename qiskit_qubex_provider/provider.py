@@ -148,6 +148,8 @@ class QubexProvider:
         qubits: Iterable[str | int] | None = None,
         device_topology: str | Path | Mapping[str, Any] | None = None,
         qubit_labels: Sequence[str] | None = None,
+        coupling_map: Iterable[tuple[int, int]] | None = None,
+        basis_gates: Iterable[str] | None = None,
         connect_devices: bool = False,
         execute_options: dict[str, Any] | None = None,
         **experiment_options: Any,
@@ -192,6 +194,8 @@ class QubexProvider:
             name=name,
             device_topology=topology,
             qubit_labels=qubit_labels or topology_qubit_labels,
+            coupling_map=coupling_map,
+            basis_gates=basis_gates,
             execute_options=execute_options,
         )
 

@@ -175,6 +175,10 @@ class QubexPulseExecutor:
                 elif name == "ry":
                     duration_ns = self._add_ry(schedule, pulse, labels[0], float(operation.params[0]))
                     self._advance_offsets(channel_offsets, labels, duration_ns)
+                elif name == "ecr":
+                    sub_schedule = pulse.zx90(labels[0], labels[1], echo=True)
+                    schedule.call(sub_schedule)
+                    self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
                 elif name == "cx":
                     sub_schedule = pulse.cx(labels[0], labels[1])
                     schedule.call(sub_schedule)
@@ -211,6 +215,7 @@ class QubexPulseExecutor:
                 if control == target:
                     continue
                 qarg = (control, target)
+                self._set_duration(durations, "ecr", qarg, _duration_seconds_safe(lambda c=control_label, t=target_label: pulse.zx90(c, t, echo=True)))
                 self._set_duration(durations, "cx", qarg, _duration_seconds_safe(lambda c=control_label, t=target_label: pulse.cx(c, t)))
                 self._set_duration(durations, "cz", qarg, _duration_seconds_safe(lambda c=control_label, t=target_label: pulse.cz(c, t)))
         return durations
