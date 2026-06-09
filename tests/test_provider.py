@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from math import pi
 from types import SimpleNamespace
 
@@ -147,6 +148,62 @@ def test_target_uses_qubex_like_system_metadata() -> None:
     assert target.num_qubits == 2
     assert target.qubit_properties[0].frequency == 5.0e9
     assert (0, 1) in target["cx"]
+
+
+def test_target_uses_device_topology_metadata() -> None:
+    topology = {
+        "name": "anemone",
+        "qubits": [
+            {
+                "id": 0,
+                "physical_id": 5,
+                "qubit_lifetime": {"t1": 25.0, "t2": 30.0},
+                "gate_duration": {"rz": 0, "sx": 16, "x": 24, "measure": 120},
+            },
+            {
+                "id": 1,
+                "physical_id": 7,
+                "qubit_lifetime": {"t1": 20.0, "t2": 22.0},
+                "gate_duration": {"rz": 0, "sx": 18, "x": 26, "measure": 120},
+            },
+        ],
+        "couplings": [
+            {
+                "control": 0,
+                "target": 1,
+                "gate_duration": {"rzx90": 272},
+            }
+        ],
+    }
+
+    target = build_qubex_target(topology)
+
+    assert target.num_qubits == 2
+    assert target.qubit_properties[0].t1 == pytest.approx(25e-6)
+    assert target["sx"][(0,)].duration == pytest.approx(16e-9)
+    assert target["measure"][(0,)].duration == pytest.approx(120e-9)
+    assert target["cx"][(0, 1)].duration == pytest.approx(272e-9)
+
+
+def test_provider_from_device_topology_file(tmp_path) -> None:
+    topology = {
+        "name": "anemone",
+        "qubits": [
+            {"id": 0, "physical_id": 5, "gate_duration": {"sx": 16, "x": 24}},
+            {"id": 1, "physical_id": 7, "gate_duration": {"sx": 16, "x": 24}},
+        ],
+        "couplings": [
+            {"control": 0, "target": 1, "gate_duration": {"rzx90": 272}}
+        ],
+    }
+    topology_path = tmp_path / "device-topology.json"
+    topology_path.write_text(json.dumps(topology), encoding="utf-8")
+
+    backend = QubexProvider.from_device_topology(topology_path).get_backend()
+
+    assert backend.name == "anemone"
+    assert backend.target.num_qubits == 2
+    assert (0, 1) in backend.target["cx"]
 
 
 def test_backend_runs_qiskit_circuit_locally() -> None:

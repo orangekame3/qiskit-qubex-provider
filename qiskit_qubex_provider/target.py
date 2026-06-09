@@ -72,6 +72,10 @@ def build_qubex_target(
     qubit_count = len(qubit_labels)
     label_to_index = {label: index for index, label in enumerate(qubit_labels)}
     properties = _infer_qubit_properties(qubex, qubit_labels)
+    instruction_durations = _merge_instruction_durations(
+        _device_topology_instruction_durations(qubex),
+        instruction_durations,
+    )
     edges = _infer_coupling_map(
         qubex,
         label_to_index,
@@ -108,6 +112,12 @@ def _infer_qubit_labels(
     if qubex is None:
         raise ValueError("num_qubits is required when no Qubex source is provided.")
 
+    if _is_device_topology(qubex):
+        return [
+            f"Q{qubit.get('physical_id', qubit.get('id', index))}"
+            for index, qubit in enumerate(qubex["qubits"])
+        ]
+
     qubit_labels = _get_attr_chain(
         qubex,
         ("qubit_labels",),
@@ -134,6 +144,19 @@ def _infer_qubit_properties(
 ) -> list[QubitProperties] | None:
     if qubex is None or isinstance(qubex, int):
         return None
+
+    if _is_device_topology(qubex):
+        return [
+            QubitProperties(
+                t1=_seconds_from_microseconds(
+                    (qubit.get("qubit_lifetime") or {}).get("t1")
+                ),
+                t2=_seconds_from_microseconds(
+                    (qubit.get("qubit_lifetime") or {}).get("t2")
+                ),
+            )
+            for qubit in qubex["qubits"]
+        ]
 
     qubits = _get_attr_chain(
         qubex,
@@ -169,6 +192,20 @@ def _infer_coupling_map(
 ) -> list[tuple[int, int]]:
     if coupling_map is not None:
         return list(coupling_map)
+
+    if _is_device_topology(qubex):
+        id_to_index = _device_topology_id_to_index(qubex)
+        return sorted(
+            {
+                (
+                    id_to_index[int(coupling["control"])],
+                    id_to_index[int(coupling["target"])],
+                )
+                for coupling in qubex.get("couplings", [])
+                if int(coupling["control"]) in id_to_index
+                and int(coupling["target"]) in id_to_index
+            }
+        )
 
     edges: set[tuple[int, int]] = set()
     cr_targets = _get_attr_chain(qubex, ("cr_targets",), ("target_registry", "cr_targets"))
@@ -254,6 +291,79 @@ def _instruction_properties(
         qarg: InstructionProperties(duration=durations.get(qarg))
         for qarg in qargs
     }
+
+
+def _is_device_topology(source: Any) -> bool:
+    return (
+        isinstance(source, Mapping)
+        and isinstance(source.get("qubits"), list)
+        and isinstance(source.get("couplings", []), list)
+    )
+
+
+def _device_topology_instruction_durations(
+    source: Any,
+) -> dict[str, dict[tuple[int, ...], float]]:
+    if not _is_device_topology(source):
+        return {}
+
+    durations: dict[str, dict[tuple[int, ...], float]] = {}
+    id_to_index = _device_topology_id_to_index(source)
+    for index, qubit in enumerate(source["qubits"]):
+        gate_durations = qubit.get("gate_duration") or {}
+        for gate_name in ("rz", "sx", "sxdg", "x", "y", "h", "measure"):
+            duration = gate_durations.get(gate_name)
+            if duration is not None:
+                durations.setdefault(gate_name, {})[(index,)] = float(duration) * 1e-9
+        for zero_duration_gate in ("id", "s", "sdg", "z", "reset"):
+            durations.setdefault(zero_duration_gate, {})[(index,)] = 0.0
+
+    for coupling in source.get("couplings", []):
+        control = int(coupling["control"])
+        target = int(coupling["target"])
+        if control not in id_to_index or target not in id_to_index:
+            continue
+        qarg = (id_to_index[control], id_to_index[target])
+        gate_durations = coupling.get("gate_duration") or {}
+        duration = (
+            gate_durations.get("cx")
+            or gate_durations.get("cz")
+            or gate_durations.get("rzx90")
+        )
+        if duration is not None:
+            seconds = float(duration) * 1e-9
+            durations.setdefault("cx", {})[qarg] = seconds
+            durations.setdefault("cz", {})[qarg] = seconds
+    return durations
+
+
+def _device_topology_id_to_index(source: Mapping[str, Any]) -> dict[int, int]:
+    return {
+        int(qubit.get("id", index)): index
+        for index, qubit in enumerate(source["qubits"])
+    }
+
+
+def _merge_instruction_durations(
+    inferred: Mapping[str, Mapping[tuple[int, ...], float]] | None,
+    explicit: Mapping[str, Mapping[tuple[int, ...], float]] | None,
+) -> dict[str, dict[tuple[int, ...], float]] | None:
+    if not inferred and not explicit:
+        return None
+    merged = {
+        gate: dict(qarg_durations)
+        for gate, qarg_durations in (inferred or {}).items()
+    }
+    for gate, qarg_durations in (explicit or {}).items():
+        merged.setdefault(gate, {}).update(qarg_durations)
+    return merged
+
+
+def _seconds_from_microseconds(value: Any) -> float | None:
+    finite_value = _finite_or_none(value)
+    if finite_value is None:
+        return None
+    return finite_value * 1e-6
 
 
 def _parse_cr_target(target: Any) -> tuple[str, str] | None:

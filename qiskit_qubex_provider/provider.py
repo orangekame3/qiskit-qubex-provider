@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 from qiskit.providers import BackendV2
@@ -83,6 +85,23 @@ class QubexProvider:
         return QubexEstimatorV2(backend or self._backend, **options)
 
     @classmethod
+    def from_device_topology(
+        cls,
+        device_topology: str | Path | Mapping[str, Any],
+        *,
+        name: str | None = None,
+        **backend_options: Any,
+    ) -> "QubexProvider":
+        """Create a provider from a device-gateway ``device_topology.json``."""
+        topology = _load_device_topology(device_topology)
+        return cls(
+            topology,
+            name=name
+            or str(topology.get("name") or topology.get("device_id") or "qubex"),
+            **backend_options,
+        )
+
+    @classmethod
     def from_experiment(
         cls,
         experiment: Any,
@@ -141,3 +160,12 @@ class QubexProvider:
             name=name,
             execute_options=execute_options,
         )
+
+
+def _load_device_topology(
+    device_topology: str | Path | Mapping[str, Any],
+) -> Mapping[str, Any]:
+    if isinstance(device_topology, Mapping):
+        return device_topology
+    path = Path(device_topology)
+    return json.loads(path.read_text(encoding="utf-8"))

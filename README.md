@@ -30,6 +30,18 @@ sampler = provider.get_sampler()
 estimator = provider.get_estimator()
 ```
 
+Device Gateway `device-topology.json` files can also be used directly for
+transpilation and local simulation metadata:
+
+```python
+provider = QubexProvider.from_device_topology("device-topology.json")
+backend = provider.get_backend()
+```
+
+The provider reads `qubits`, `couplings`, qubit lifetimes, and gate durations
+from the topology file. Coupling `gate_duration.rzx90` is exposed as the
+scheduled two-qubit duration for `cx`/`cz`.
+
 `qubex` is intentionally not a hard package dependency because the Qubex
 repository is commonly installed from a local checkout:
 
