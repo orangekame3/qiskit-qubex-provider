@@ -241,6 +241,11 @@ class QubexPulseExecutor:
         execute_options = dict(self._execute_options)
         execute_options.update(options)
         execute_options.setdefault("state_classification", True)
+        if not execute_options["state_classification"]:
+            raise ValueError(
+                "QubexPulseExecutor requires state_classification=True to "
+                "produce Qiskit counts."
+            )
         execute_options.setdefault("final_measurement", not _has_explicit_measurements(circuit))
         if (
             not _has_explicit_measurements(circuit)
