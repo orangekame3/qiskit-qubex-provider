@@ -325,7 +325,10 @@ class QubexPulseExecutor:
     ) -> Result:
         results = []
         for execution in executions:
-            counts, memory_values = self._qiskit_counts_and_memory(execution)
+            counts, memory_values = self._qiskit_counts_and_memory(
+                execution,
+                include_memory=memory,
+            )
             self._validate_result_shots(
                 counts=counts,
                 memory_values=memory_values if memory else None,
@@ -363,8 +366,11 @@ class QubexPulseExecutor:
     def _qiskit_counts_and_memory(
         self,
         execution: QubexCircuitExecution,
+        *,
+        include_memory: bool,
     ) -> tuple[Counter[str], list[str]]:
         raw_counts = self._raw_counts(execution)
+        raw_memory = self._raw_memory(execution) if include_memory else None
         counts: Counter[str] = Counter()
         memory: list[str] = []
         for qubex_bitstring, count in raw_counts.items():
@@ -374,8 +380,8 @@ class QubexPulseExecutor:
                 execution,
             )
             counts[hex_value] += count_value
-            memory.extend([hex_value] * count_value)
-        raw_memory = self._raw_memory(execution)
+            if include_memory and raw_memory is None:
+                memory.extend([hex_value] * count_value)
         return counts, memory if raw_memory is None else raw_memory
 
     @staticmethod
