@@ -400,9 +400,15 @@ class QubexPulseExecutor:
             except TypeError:
                 return get_counts()
         if isinstance(raw_result, Mapping):
-            nested_counts = raw_result.get("counts")
-            if isinstance(nested_counts, Mapping):
-                return nested_counts
+            if "counts" in raw_result:
+                nested_counts = raw_result["counts"]
+                if isinstance(nested_counts, Mapping):
+                    return nested_counts
+                raise TypeError("Qubex execution result 'counts' must be a mapping.")
+            if "memory" in raw_result:
+                raise TypeError(
+                    "Qubex execution result must include a counts mapping."
+                )
             return raw_result
         counts = getattr(raw_result, "counts", None)
         if callable(counts):
