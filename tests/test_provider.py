@@ -526,6 +526,72 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
     assert execute_call["final_measurement"] is False
 
 
+@pytest.mark.parametrize(
+    "raw_result",
+    [
+        {"counts": {"1": 3, "0": 2}},
+        {"1": 3, "0": 2},
+        SimpleNamespace(counts={"1": 3, "0": 2}),
+    ],
+)
+def test_qubex_executor_accepts_mapping_counts(raw_result, monkeypatch) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return raw_result
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    result = backend.run(circuit, shots=5).result()
+
+    assert result.get_counts() == {"1": 3, "0": 2}
+
+
+def test_qubex_executor_accepts_no_argument_get_counts(monkeypatch) -> None:
+    class FakeRawResult:
+        def get_counts(self):
+            return {(1,): 3, (0,): 2}
+
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return FakeRawResult()
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    result = backend.run(circuit, shots=5).result()
+
+    assert result.get_counts() == {"1": 3, "0": 2}
+
+
 def test_provider_from_experiment_uses_qubex_executor() -> None:
     class FakePulse:
         def x90(self, target):
