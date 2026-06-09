@@ -132,24 +132,23 @@ scheduled = transpile(circuit, backend, scheduling_method="alap")
 ```
 
 Qubex's native two-qubit pulse is echoed cross-resonance. For production
-transpilation that should target the native Qubex gate set, use
-`QUBEX_NATIVE_BASIS_GATES`; Qiskit will decompose `cx` into `ecr` plus
-single-qubit gates:
+transpilation that should target the native Qubex gate set, pass
+`native=True`; Qiskit will decompose `cx` into `ecr` plus single-qubit gates:
 
 ```python
-from qiskit_qubex_provider import QUBEX_NATIVE_BASIS_GATES
-
 provider = QubexProvider.from_experiment(
     exp,
     device_topology="device-topology.json",
-    basis_gates=QUBEX_NATIVE_BASIS_GATES,
+    native=True,
 )
 backend = provider.get_backend()
 native = transpile(circuit, backend, optimization_level=1)
 ```
 
-The default target still exposes `cx`/`cz` for compatibility. During execution,
-Qiskit `ecr` instructions are emitted as Qubex echoed `zx90` pulse schedules.
+The default target still exposes `cx`/`cz` for compatibility. For explicit
+control, pass `basis_gates=QUBEX_NATIVE_BASIS_GATES` instead of `native=True`.
+During execution, Qiskit `ecr` instructions are emitted as Qubex echoed `zx90`
+pulse schedules.
 
 For generic dynamical decoupling, build a DD pass manager from the same backend
 target after layout/routing has mapped the circuit to physical qubits:
@@ -198,6 +197,16 @@ to the requested Qiskit clbits. `rz`, `s`, `sdg`, and `z` are emitted as
 zero-duration `VirtualZ` frame shifts, so Qubex/qxpulse frame tracking remains
 responsible for applying them to later physical pulses.
 
+Before submitting to hardware, validate the final transpiled/scheduled circuit.
+This builds the exact Qubex `PulseSchedule`, calls qxpulse schedule validation
+when available, and runs the provider's resource preflight without calling
+`measurement_service.execute`:
+
+```python
+backend.validate(scheduled)
+job = backend.run(scheduled, shots=1024)
+```
+
 For simple setup code, the provider can create the `Experiment` for you. Device
 connection is opt-in:
 
@@ -238,6 +247,8 @@ rejected.
 Before execution, schedules are preflighted against Qubex target metadata when
 physical channel information is available. Overlapping non-blank pulses on the
 same hardware channel are rejected before calling `measurement_service.execute`.
+Repository tests use synthetic topology and calibration fixtures only; private
+Qubex configuration or measured device data should stay out of CI.
 Qubex/qxpulse still performs the backend-specific schedule and capture
 validation for constraints that are not representable from target channel
 metadata alone.

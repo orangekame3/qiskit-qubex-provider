@@ -15,7 +15,7 @@ from .device_topology import qid_to_label
 from .estimator import QubexEstimatorV2
 from .executor import QubexPulseExecutor
 from .sampler import QubexSamplerV2
-from .target import QubexTargetSource
+from .target import QUBEX_NATIVE_BASIS_GATES, QubexTargetSource
 
 
 class QubexProvider:
@@ -29,6 +29,7 @@ class QubexProvider:
         num_qubits: int | None = None,
         coupling_map: Iterable[tuple[int, int]] | None = None,
         basis_gates: Iterable[str] | None = None,
+        native: bool = False,
         instruction_durations: Mapping[str, Mapping[tuple[int, ...], float]] | None = None,
         executor: Any | None = None,
         use_qubex_executor: bool = False,
@@ -37,6 +38,8 @@ class QubexProvider:
     ) -> None:
         if executor is None and use_qubex_executor:
             executor = QubexPulseExecutor(qubex)
+        if native and basis_gates is None:
+            basis_gates = QUBEX_NATIVE_BASIS_GATES
         self._backend = backend_cls(
             qubex,
             name=name,
@@ -85,12 +88,22 @@ class QubexProvider:
         """Return a Qiskit V2 Estimator for a Qubex backend."""
         return QubexEstimatorV2(backend or self._backend, **options)
 
+    def validate(
+        self,
+        run_input: Any,
+        *,
+        backend: QubexBackend | None = None,
+    ) -> list[Any]:
+        """Build and preflight Qubex pulse schedules without executing them."""
+        return (backend or self._backend).validate(run_input)
+
     @classmethod
     def from_device_topology(
         cls,
         device_topology: str | Path | Mapping[str, Any],
         *,
         name: str | None = None,
+        native: bool = False,
         **backend_options: Any,
     ) -> "QubexProvider":
         """Create a provider from a device-gateway ``device_topology.json``."""
@@ -99,6 +112,7 @@ class QubexProvider:
             topology,
             name=name
             or str(topology.get("name") or topology.get("device_id") or "qubex"),
+            native=native,
             **backend_options,
         )
 
@@ -111,6 +125,7 @@ class QubexProvider:
         device_topology: str | Path | Mapping[str, Any] | None = None,
         qubit_labels: Sequence[str] | None = None,
         execute_options: dict[str, Any] | None = None,
+        native: bool = False,
         **backend_options: Any,
     ) -> "QubexProvider":
         """Create a provider from an already configured Qubex Experiment."""
@@ -135,6 +150,7 @@ class QubexProvider:
             name=name,
             executor=executor,
             instruction_durations=executor.instruction_durations_seconds(),
+            native=native,
             **backend_options,
         )
 
@@ -150,6 +166,7 @@ class QubexProvider:
         qubit_labels: Sequence[str] | None = None,
         coupling_map: Iterable[tuple[int, int]] | None = None,
         basis_gates: Iterable[str] | None = None,
+        native: bool = False,
         connect_devices: bool = False,
         execute_options: dict[str, Any] | None = None,
         **experiment_options: Any,
@@ -196,6 +213,7 @@ class QubexProvider:
             qubit_labels=qubit_labels or topology_qubit_labels,
             coupling_map=coupling_map,
             basis_gates=basis_gates,
+            native=native,
             execute_options=execute_options,
         )
 

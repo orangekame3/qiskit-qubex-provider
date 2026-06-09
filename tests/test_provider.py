@@ -615,6 +615,30 @@ def test_native_basis_target_exposes_ecr_without_cx_cz() -> None:
     assert backend.target["ecr"][(0, 1)].duration == pytest.approx(24e-9)
 
 
+def test_native_flag_target_exposes_ecr_without_cx_cz() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        coupling_map=[(0, 1)],
+        native=True,
+    ).get_backend()
+
+    assert "ecr" in backend.target.operation_names
+    assert "cx" not in backend.target.operation_names
+    assert "cz" not in backend.target.operation_names
+
+
 def test_native_basis_transpiles_cx_to_ecr() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
@@ -688,6 +712,28 @@ def test_provider_from_experiment_can_use_device_topology_target() -> None:
     assert (1, 0) not in backend.target["cx"]
     assert backend.target["sx"][(0,)].duration == pytest.approx(4e-9)
     assert backend._executor.qubit_labels == ("Q05", "Q07")
+
+
+def test_provider_from_device_topology_native_flag_exposes_ecr_without_cx_cz() -> None:
+    topology = {
+        "name": "topology-device",
+        "qubits": [
+            {"id": 0, "physical_id": 5},
+            {"id": 1, "physical_id": 7},
+        ],
+        "couplings": [
+            {"control": 0, "target": 1, "gate_duration": {"rzx90": 272}},
+        ],
+    }
+
+    backend = QubexProvider.from_device_topology(
+        topology,
+        native=True,
+    ).get_backend()
+
+    assert "ecr" in backend.target.operation_names
+    assert "cx" not in backend.target.operation_names
+    assert "cz" not in backend.target.operation_names
 
 
 def test_provider_from_experiment_allows_explicit_topology_qubit_labels() -> None:
@@ -811,6 +857,104 @@ def test_provider_from_experiment_config_forwards_backend_basis_gates(monkeypatc
 
     assert "ecr" in backend.target.operation_names
     assert "cx" not in backend.target.operation_names
+
+
+def test_provider_from_experiment_config_native_flag_is_backend_only(monkeypatch) -> None:
+    class FakeExperiment:
+        dt = 1e-9
+
+        def __init__(self, *, system_id, chip_id, qubits, **options):
+            assert "native" not in options
+            assert "basis_gates" not in options
+            self.qubit_labels = tuple(f"Q0{qubit}" for qubit in qubits)
+            self.pulse = DurationPulse()
+            self.measurement_service = SimpleNamespace(execute=lambda **kwargs: None)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "qubex",
+        SimpleNamespace(Experiment=FakeExperiment),
+    )
+
+    backend = QubexProvider.from_experiment_config(
+        system_id="system",
+        qubits=[0, 1],
+        coupling_map=[(0, 1)],
+        native=True,
+    ).get_backend()
+
+    assert "ecr" in backend.target.operation_names
+    assert "cx" not in backend.target.operation_names
+
+
+def test_backend_validate_builds_schedule_without_executing(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, **kwargs):
+            self.calls.append(kwargs)
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    experiment = FakeExperiment()
+    backend = QubexProvider.from_experiment(experiment).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.x(0)
+    circuit.measure(0, 0)
+
+    schedules = backend.validate(circuit)
+
+    assert len(schedules) == 1
+    assert any(op[0] == "add" and op[1] == "Q0" for op in schedules[0].ops)
+    assert experiment.measurement_service.calls == []
+
+
+def test_provider_validate_delegates_to_backend(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    provider = QubexProvider.from_experiment(FakeExperiment())
+    circuit = QuantumCircuit(1)
+    circuit.x(0)
+
+    schedules = provider.validate(circuit)
+
+    assert len(schedules) == 1
+
+
+def test_validate_without_qubex_executor_raises() -> None:
+    backend = QubexProvider(num_qubits=1).get_backend()
+    circuit = QuantumCircuit(1)
+
+    with pytest.raises(ValueError, match="requires a Qubex executor"):
+        backend.validate(circuit)
 
 
 def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
