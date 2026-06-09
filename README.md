@@ -128,3 +128,10 @@ That includes measurement-conditioned gates and control-flow operations such as
 `if_else`. Initial reset operations are accepted as no-ops under the usual
 shot-initialization assumption, but any reset after an active operation is
 rejected.
+
+Before execution, schedules are preflighted against Qubex target metadata when
+physical channel information is available. Overlapping non-blank pulses on the
+same hardware channel are rejected before calling `measurement_service.execute`.
+Qubex/qxpulse still performs the backend-specific schedule and capture
+validation for constraints that are not representable from target channel
+metadata alone.

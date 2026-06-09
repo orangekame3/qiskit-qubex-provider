@@ -520,6 +520,51 @@ def test_qubex_executor_allows_initial_reset(monkeypatch) -> None:
     assert any(op[0] == "add" and op[1] == "Q0" for op in schedule.ops)
 
 
+def test_qubex_executor_rejects_overlapping_hardware_resource_windows() -> None:
+    class FakeSchedule:
+        def get_pulse_ranges(self):
+            return {
+                "Q0": [range(0, 10)],
+                "Q1": [range(5, 15)],
+            }
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+        def get_target(self, label):
+            channel = SimpleNamespace(id="shared-control")
+            return SimpleNamespace(channel=channel)
+
+    executor = QubexPulseExecutor(FakeExperiment())
+
+    with pytest.raises(ValueError, match="resource conflict"):
+        executor._validate_resource_constraints(FakeSchedule())
+
+
+def test_qubex_executor_allows_non_overlapping_hardware_resource_windows() -> None:
+    class FakeSchedule:
+        def get_pulse_ranges(self):
+            return {
+                "Q0": [range(0, 10)],
+                "Q1": [range(10, 20)],
+            }
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+        def get_target(self, label):
+            channel = SimpleNamespace(id="shared-control")
+            return SimpleNamespace(channel=channel)
+
+    QubexPulseExecutor(FakeExperiment())._validate_resource_constraints(FakeSchedule())
+
+
 def test_transpile_scheduling_uses_qubex_target_durations() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
