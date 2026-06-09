@@ -94,3 +94,13 @@ class QubexBackend(BackendV2):
                     pass
             return job
         return self._simulator.run(run_input, **run_options)
+
+    def validate(self, run_input: Any) -> list[Any]:
+        """Build and preflight Qubex pulse schedules without executing them."""
+        if self._executor is None or not hasattr(self._executor, "validate"):
+            raise ValueError(
+                "QubexBackend.validate requires a Qubex executor. Create the "
+                "backend with QubexProvider.from_experiment(...) or pass a "
+                "custom executor that implements validate(run_input)."
+            )
+        return self._executor.validate(run_input)

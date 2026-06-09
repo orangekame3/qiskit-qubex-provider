@@ -84,6 +84,13 @@ class QubexPulseExecutor:
         )
         return QubexJob(backend=None, job_id=job_id, result=result)
 
+    def validate(self, run_input: Any) -> list[Any]:
+        """Build Qubex pulse schedules and run preflight checks without execution."""
+        return [
+            self.build_schedule(circuit)
+            for circuit in _normalize_circuits(run_input)
+        ]
+
     def build_schedule(self, circuit: QuantumCircuit) -> Any:
         """Convert a supported Qiskit circuit into a Qubex PulseSchedule."""
         self._validate_static_circuit(circuit)
