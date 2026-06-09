@@ -1012,6 +1012,35 @@ def test_qubex_executor_rejects_memory_length_mismatch(monkeypatch) -> None:
         backend.run(circuit, shots=3, memory=True).result()
 
 
+def test_qubex_executor_rejects_empty_raw_memory(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return {
+                "counts": {"1": 2, "0": 1},
+                "memory": [],
+            }
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    with pytest.raises(ValueError, match="memory length does not match"):
+        backend.run(circuit, shots=3, memory=True).result()
+
+
 def test_provider_from_experiment_uses_qubex_executor() -> None:
     class FakePulse:
         def x90(self, target):

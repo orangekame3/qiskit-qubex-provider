@@ -375,7 +375,8 @@ class QubexPulseExecutor:
             )
             counts[hex_value] += count_value
             memory.extend([hex_value] * count_value)
-        return counts, self._raw_memory(execution) or memory
+        raw_memory = self._raw_memory(execution)
+        return counts, memory if raw_memory is None else raw_memory
 
     @staticmethod
     def _raw_counts(execution: QubexCircuitExecution) -> Mapping[Any, Any]:
