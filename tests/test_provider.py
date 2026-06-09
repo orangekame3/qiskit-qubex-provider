@@ -1662,6 +1662,79 @@ def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
     assert rq1_ops[1][2].name == "readout-Q1"
 
 
+def test_legacy_device_gateway_timing_ignores_qiskit_start_times(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(2, 2)
+    circuit.x(0)
+    circuit.x(1)
+    circuit.rz(pi / 2, 0)
+    circuit.cx(0, 1)
+    circuit.delay(5, 1, unit="dt")
+    circuit.measure([0, 1], [0, 1])
+    circuit._op_start_times = [0, 20, 30, 40, 70, 75, 75]
+    circuit._duration = 75
+    circuit._unit = "dt"
+
+    schedule = QubexPulseExecutor(
+        FakeExperiment(),
+        timing_policy="legacy_device_gateway",
+    ).build_schedule(circuit)
+
+    add_ops = [op for op in schedule.ops if op[0] == "add"]
+    call_ops = [op for op in schedule.ops if op[0] == "call"]
+    barrier_indices = [index for index, op in enumerate(schedule.ops) if op[0] == "barrier"]
+    virtual_z_indices = [
+        index
+        for index, op in enumerate(schedule.ops)
+        if op[0] == "add" and op[2].name == "virtual_z"
+    ]
+
+    assert schedule.labels == ["Q0", "Q1", "Q0-Q1"]
+    assert [(op[1], op[2].name) for op in add_ops] == [
+        ("Q0", "x180-Q0"),
+        ("Q1", "x180-Q1"),
+        ("Q0", "virtual_z"),
+        ("Q1", "blank"),
+    ]
+    assert add_ops[-1][2].duration == 5
+    assert call_ops[0][1].ops == [("cx", "Q0", "Q1")]
+    assert not any(op[2].name.startswith("readout") for op in add_ops)
+    assert barrier_indices[0] < virtual_z_indices[0] < barrier_indices[1]
+
+
+def test_provider_from_experiment_forwards_timing_policy() -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        timing_policy="legacy_device_gateway",
+    ).get_backend()
+
+    assert backend._executor._timing_policy == "legacy_device_gateway"
+
+
+def test_qubex_executor_rejects_unknown_timing_policy() -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    with pytest.raises(ValueError, match="timing_policy"):
+        QubexPulseExecutor(FakeExperiment(), timing_policy="serial")
+
+
 def test_qubex_executor_converts_ecr_to_echoed_zx90(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0", "Q1")

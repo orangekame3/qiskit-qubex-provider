@@ -8,13 +8,15 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from math import pi
 from numbers import Integral
-from typing import Any
+from typing import Any, Literal
 
 from qiskit.circuit import ClassicalRegister, QuantumCircuit, Qubit
 from qiskit.circuit import Delay as QiskitDelay
 from qiskit.result import Result
 
 from .job import QubexJob
+
+TimingPolicy = Literal["qiskit", "legacy_device_gateway"]
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,7 @@ class QubexPulseExecutor:
         *,
         qubit_labels: Sequence[str] | None = None,
         execute_options: Mapping[str, Any] | None = None,
+        timing_policy: TimingPolicy | str = "qiskit",
     ) -> None:
         if qubex is None:
             raise ValueError(
@@ -55,6 +58,7 @@ class QubexPulseExecutor:
         self._qubex = qubex
         self._qubit_labels = tuple(qubit_labels or self._infer_qubit_labels(qubex))
         self._execute_options = dict(execute_options or {})
+        self._timing_policy = _timing_policy(timing_policy)
         if not self._qubit_labels:
             raise ValueError(
                 "qubit_labels must be supplied or inferable from the Qubex object. "
@@ -97,6 +101,15 @@ class QubexPulseExecutor:
         """Convert a supported Qiskit circuit into a Qubex PulseSchedule."""
         self._validate_circuit_qubits(circuit)
         self._validate_static_circuit(circuit)
+        if self._timing_policy == "legacy_device_gateway":
+            schedule = self._build_legacy_device_gateway_schedule(circuit)
+        else:
+            schedule = self._build_qiskit_timed_schedule(circuit)
+        self._validate_native_schedule(schedule)
+        self._validate_resource_constraints(schedule)
+        return schedule
+
+    def _build_qiskit_timed_schedule(self, circuit: QuantumCircuit) -> Any:
         pulse = self._pulse_source()
         pulse_schedule_cls = _import_pulse_schedule()
         blank_cls = _import_blank()
@@ -202,8 +215,64 @@ class QubexPulseExecutor:
                         f"Unsupported Qiskit instruction {name!r} for Qubex pulse execution. "
                         "Transpile to the backend target or provide a custom executor."
                     )
-        self._validate_native_schedule(schedule)
-        self._validate_resource_constraints(schedule)
+        return schedule
+
+    def _build_legacy_device_gateway_schedule(self, circuit: QuantumCircuit) -> Any:
+        """Build the deprecated device-gateway-compatible sequential schedule."""
+        pulse = self._pulse_source()
+        pulse_schedule_cls = _import_pulse_schedule()
+        blank_cls = _import_blank()
+        with pulse_schedule_cls(self._used_legacy_labels(circuit)) as schedule:
+            for instruction in circuit.data:
+                operation = instruction.operation
+                name = operation.name
+                qubit_indices = [circuit.find_bit(qubit).index for qubit in instruction.qubits]
+                labels = [self._qubit_labels[index] for index in qubit_indices]
+                if name == "barrier":
+                    schedule.barrier()
+                elif name == "delay":
+                    delay_ns = _delay_duration_ns(operation, self._dt_seconds())
+                    if delay_ns > 0:
+                        schedule.add(labels[0], blank_cls(delay_ns))
+                elif name == "measure":
+                    continue
+                elif name in {"id", "reset"}:
+                    continue
+                elif name == "x":
+                    schedule.add(labels[0], pulse.x180(labels[0]))
+                elif name == "sx":
+                    schedule.add(labels[0], pulse.x90(labels[0]))
+                elif name == "sxdg":
+                    schedule.add(labels[0], pulse.x90m(labels[0]))
+                elif name == "y":
+                    schedule.add(labels[0], pulse.y180(labels[0]))
+                elif name == "h":
+                    schedule.add(labels[0], pulse.hadamard(labels[0]))
+                elif name == "s":
+                    schedule.add(labels[0], pulse.z90())
+                elif name == "sdg":
+                    schedule.add(labels[0], self._virtual_z(-pi / 2))
+                elif name == "z":
+                    schedule.add(labels[0], pulse.z180())
+                elif name == "rz":
+                    schedule.barrier()
+                    schedule.add(labels[0], self._virtual_z(float(operation.params[0])))
+                    schedule.barrier()
+                elif name == "rx":
+                    self._add_rx(schedule, pulse, labels[0], float(operation.params[0]))
+                elif name == "ry":
+                    self._add_ry(schedule, pulse, labels[0], float(operation.params[0]))
+                elif name == "ecr":
+                    schedule.call(pulse.zx90(labels[0], labels[1], echo=True))
+                elif name == "cx":
+                    schedule.call(pulse.cx(labels[0], labels[1]))
+                elif name == "cz":
+                    schedule.call(pulse.cz(labels[0], labels[1]))
+                else:
+                    raise ValueError(
+                        f"Unsupported Qiskit instruction {name!r} for Qubex pulse execution. "
+                        "Transpile to the backend target or provide a custom executor."
+                    )
         return schedule
 
     def instruction_durations_seconds(self) -> dict[str, dict[tuple[int, ...], float]]:
@@ -564,6 +633,23 @@ class QubexPulseExecutor:
     def _virtual_z(self, theta: float) -> Any:
         return self._pulse_source().z90().__class__(theta)
 
+    def _used_legacy_labels(self, circuit: QuantumCircuit) -> list[str]:
+        labels: list[str] = []
+        for instruction in circuit.data:
+            for qubit in instruction.qubits:
+                label = self._qubit_labels[circuit.find_bit(qubit).index]
+                if label not in labels:
+                    labels.append(label)
+            if instruction.operation.name in {"cx", "cz", "ecr"} and len(instruction.qubits) == 2:
+                left, right = [
+                    self._qubit_labels[circuit.find_bit(qubit).index]
+                    for qubit in instruction.qubits
+                ]
+                coupling_label = f"{left}-{right}"
+                if coupling_label not in labels:
+                    labels.append(coupling_label)
+        return labels or list(self._qubit_labels[: circuit.num_qubits])
+
     def _readout_label(self, target: str) -> str:
         for source in (
             self._qubex,
@@ -805,6 +891,12 @@ class QubexPulseExecutor:
         if qxpulse_sampling_period is not None:
             return qxpulse_sampling_period * 1e-9
         return 1e-9
+
+
+def _timing_policy(value: str) -> TimingPolicy:
+    if value in {"qiskit", "legacy_device_gateway"}:
+        return value  # type: ignore[return-value]
+    raise ValueError("timing_policy must be 'qiskit' or 'legacy_device_gateway'.")
 
 
 def _normalize_circuits(run_input: Any) -> list[QuantumCircuit]:

@@ -198,6 +198,23 @@ to the requested Qiskit clbits. `rz`, `s`, `sdg`, and `z` are emitted as
 zero-duration `VirtualZ` frame shifts, so Qubex/qxpulse frame tracking remains
 responsible for applying them to later physical pulses.
 
+For migration comparisons with the old Device Gateway Qubex plugin, the
+executor also supports a deprecated legacy timing policy:
+
+```python
+provider = QubexProvider.from_experiment(
+    exp,
+    device_topology="device-topology.json",
+    timing_policy="legacy_device_gateway",
+)
+```
+
+This policy ignores Qiskit operation start times and emits pulses in Qiskit
+instruction order, matching the legacy Device Gateway style closely enough for
+A/B validation. New execution paths should keep the default
+`timing_policy="qiskit"`, which respects Qiskit scheduling, `delay` padding,
+and explicit measurement timing.
+
 Before submitting to hardware, validate the final transpiled/scheduled circuit.
 This builds the exact Qubex `PulseSchedule`, calls qxpulse schedule validation
 when available, and runs the provider's resource preflight without calling
