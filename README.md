@@ -79,6 +79,23 @@ job = backend.run(transpiled, shots=1024)
 counts = job.result().get_counts()
 ```
 
+`from_experiment(...)` is the recommended production path. It injects the
+configured Qubex `Experiment` into `QubexPulseExecutor`, infers calibrated gate
+durations from `Experiment.pulse`, and exposes those durations plus the Qubex
+sampling period as the Qiskit `Target`. That lets Qiskit scheduling passes use
+the same timing grid as Qubex:
+
+```python
+scheduled = transpile(circuit, backend, scheduling_method="asap")
+scheduled = transpile(circuit, backend, scheduling_method="alap")
+```
+
+Scheduled Qiskit operation start times are preserved when building the Qubex
+`PulseSchedule`: idle time and Qiskit `delay` instructions become Qubex
+`Blank` pulses. `rz`, `s`, `sdg`, and `z` are emitted as zero-duration
+`VirtualZ` frame shifts, so Qubex/qxpulse frame tracking remains responsible
+for applying them to later physical pulses.
+
 For simple setup code, the provider can create the `Experiment` for you. Device
 connection is opt-in:
 

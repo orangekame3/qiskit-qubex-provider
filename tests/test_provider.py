@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from math import pi
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +17,99 @@ from qiskit_qubex_provider import (
     build_qubex_target,
 )
 import qiskit_qubex_provider.executor as executor_module
+
+
+class DurationObject:
+    def __init__(self, name: str, duration: float = 0.0):
+        self.name = name
+        self.cached_duration = duration
+        self.duration = duration
+
+
+class DurationPulse:
+    def x90(self, target):
+        return DurationObject(f"x90-{target}", 4)
+
+    def x90m(self, target):
+        return DurationObject(f"x90m-{target}", 4)
+
+    def x180(self, target):
+        return DurationObject(f"x180-{target}", 8)
+
+    def y90(self, target):
+        return DurationObject(f"y90-{target}", 4)
+
+    def y90m(self, target):
+        return DurationObject(f"y90m-{target}", 4)
+
+    def y180(self, target):
+        return DurationObject(f"y180-{target}", 8)
+
+    def z90(self):
+        return DurationVirtualZ(pi / 2)
+
+    def z180(self):
+        return DurationVirtualZ(pi)
+
+    def hadamard(self, target):
+        return DurationObject(f"h-{target}", 12)
+
+    def cx(self, control, target):
+        return DurationSchedule(
+            [control, target, f"{control}-{target}"],
+            duration=24,
+            ops=[("cx", control, target)],
+        )
+
+    def cz(self, control, target):
+        return DurationSchedule(
+            [control, target, f"{control}-{target}"],
+            duration=28,
+            ops=[("cz", control, target)],
+        )
+
+
+class DurationSchedule:
+    def __init__(self, channels=None, *, duration: float = 0.0, ops=None):
+        self.labels = list(channels or [])
+        self.ops = list(ops or [])
+        self.duration = duration
+        self.cached_duration = duration
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.barrier()
+
+    def add(self, label, obj):
+        self.ops.append(("add", label, obj))
+        if label not in self.labels:
+            self.labels.append(label)
+        self.duration += getattr(obj, "cached_duration", 0.0)
+        self.cached_duration = self.duration
+
+    def call(self, schedule):
+        self.ops.append(("call", schedule))
+        for label in schedule.labels:
+            if label not in self.labels:
+                self.labels.append(label)
+        self.duration += schedule.duration
+        self.cached_duration = self.duration
+
+    def barrier(self, labels=None):
+        self.ops.append(("barrier", labels))
+
+
+class DurationBlank(DurationObject):
+    def __init__(self, duration: float):
+        super().__init__("blank", duration)
+
+
+class DurationVirtualZ(DurationObject):
+    def __init__(self, theta: float):
+        super().__init__("virtual_z", 0)
+        self.theta = theta
 
 
 def test_provider_returns_backend_for_integer_qubit_count() -> None:
@@ -194,6 +288,7 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
         "_import_pulse_schedule",
         lambda: FakePulseSchedule,
     )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
     qubex = FakeQubex()
     provider = QubexProvider(
         num_qubits=2,
@@ -253,6 +348,117 @@ def test_provider_from_experiment_uses_qubex_executor() -> None:
     assert backend.num_qubits == 2
     assert backend.target.num_qubits == 2
     assert isinstance(backend._executor, QubexPulseExecutor)
+
+
+def test_provider_from_experiment_populates_target_durations() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+        dt = 2e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+
+    assert backend.target.dt == pytest.approx(2e-9)
+    assert backend.target["x"][(0,)].duration == pytest.approx(8e-9)
+    assert backend.target["sx"][(0,)].duration == pytest.approx(4e-9)
+    assert backend.target["h"][(0,)].duration == pytest.approx(12e-9)
+    assert backend.target["cx"][(0, 1)].duration == pytest.approx(24e-9)
+    assert backend.target["rz"][(0,)].duration == 0.0
+
+
+def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(2, 2)
+    circuit.x(0)
+    circuit.x(1)
+    circuit.rz(pi / 2, 0)
+    circuit.delay(5, 1, unit="dt")
+    circuit.measure([0, 1], [0, 1])
+    circuit._op_start_times = [0, 10, 18, 20, 25, 25]
+    circuit._duration = 25
+    circuit._unit = "dt"
+
+    schedule = QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+    q0_ops = [op for op in schedule.ops if op[0] == "add" and op[1] == "Q0"]
+    q1_ops = [op for op in schedule.ops if op[0] == "add" and op[1] == "Q1"]
+    assert q0_ops[0][2].name == "x180-Q0"
+    assert q0_ops[1][2].name == "blank"
+    assert q0_ops[1][2].duration == pytest.approx(10)
+    assert q0_ops[2][2].name == "virtual_z"
+    assert q0_ops[2][2].theta == pytest.approx(pi / 2)
+    assert q0_ops[2][2].duration == 0
+    assert q1_ops[0][2].name == "blank"
+    assert q1_ops[0][2].duration == pytest.approx(10)
+    assert q1_ops[1][2].name == "x180-Q1"
+    assert q1_ops[2][2].name == "blank"
+    assert q1_ops[2][2].duration == 2
+    assert q1_ops[3][2].name == "blank"
+    assert q1_ops[3][2].duration == 5
+
+
+def test_transpile_scheduling_uses_qubex_target_durations() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        coupling_map=[(0, 1)],
+    ).get_backend()
+    circuit = QuantumCircuit(2, 2)
+    circuit.x(0)
+    circuit.x(1)
+    circuit.cx(0, 1)
+    circuit.measure([0, 1], [0, 1])
+
+    scheduled = transpile(circuit, backend, scheduling_method="asap")
+
+    assert scheduled.op_start_times is not None
+
+
+def test_transpile_scheduling_decomposes_parameterized_rotations() -> None:
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.rx(pi / 2, 0)
+    circuit.measure(0, 0)
+
+    scheduled = transpile(circuit, backend, scheduling_method="asap")
+
+    assert "rx" not in scheduled.count_ops()
+    assert scheduled.op_start_times is not None
 
 
 def test_qubex_executor_requires_experiment_like_object() -> None:

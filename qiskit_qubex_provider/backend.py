@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from qiskit.providers import BackendV2, Options
@@ -31,6 +31,7 @@ class QubexBackend(BackendV2):
         num_qubits: int | None = None,
         coupling_map: Iterable[tuple[int, int]] | None = None,
         basis_gates: Iterable[str] | None = None,
+        instruction_durations: Mapping[str, Mapping[tuple[int, ...], float]] | None = None,
         dt: float | None = 1e-9,
         executor: Any | None = None,
         simulator: BasicSimulator | None = None,
@@ -44,6 +45,7 @@ class QubexBackend(BackendV2):
             num_qubits=num_qubits,
             coupling_map=coupling_map,
             basis_gates=basis_gates,
+            instruction_durations=instruction_durations,
             dt=dt,
             description=f"Qiskit target for {name}",
         )
