@@ -10,6 +10,7 @@ from qiskit.providers.exceptions import QiskitBackendNotFoundError
 
 from .backend import QubexBackend
 from .estimator import QubexEstimatorV2
+from .executor import QubexPulseExecutor
 from .sampler import QubexSamplerV2
 from .target import QubexTargetSource
 
@@ -25,15 +26,20 @@ class QubexProvider:
         num_qubits: int | None = None,
         coupling_map: Iterable[tuple[int, int]] | None = None,
         basis_gates: Iterable[str] | None = None,
+        executor: Any | None = None,
+        use_qubex_executor: bool = False,
         backend_cls: type[QubexBackend] = QubexBackend,
         **backend_options: Any,
     ) -> None:
+        if executor is None and use_qubex_executor:
+            executor = QubexPulseExecutor(qubex)
         self._backend = backend_cls(
             qubex,
             name=name,
             num_qubits=num_qubits,
             coupling_map=coupling_map,
             basis_gates=basis_gates,
+            executor=executor,
             provider=self,
             **backend_options,
         )
