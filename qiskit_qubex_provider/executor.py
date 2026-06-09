@@ -288,6 +288,11 @@ class QubexPulseExecutor:
         results = []
         for execution in executions:
             counts, memory_values = self._qiskit_counts_and_memory(execution)
+            self._validate_result_shots(
+                counts=counts,
+                memory_values=memory_values if memory else None,
+                shots=shots,
+            )
             data: dict[str, Any] = {"counts": dict(counts)}
             if memory:
                 data["memory"] = memory_values
@@ -387,6 +392,25 @@ class QubexPulseExecutor:
         if isinstance(memory, Sequence) and not isinstance(memory, str):
             return memory
         return None
+
+    @staticmethod
+    def _validate_result_shots(
+        *,
+        counts: Mapping[str, int],
+        memory_values: Sequence[str] | None,
+        shots: int,
+    ) -> None:
+        count_total = sum(int(count) for count in counts.values())
+        if count_total != shots:
+            raise ValueError(
+                "Qubex result count total does not match requested shots: "
+                f"got {count_total}, expected {shots}."
+            )
+        if memory_values is not None and len(memory_values) != shots:
+            raise ValueError(
+                "Qubex result memory length does not match requested shots: "
+                f"got {len(memory_values)}, expected {shots}."
+            )
 
     def _qubex_bitstring_to_hex(
         self,
