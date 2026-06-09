@@ -1,0 +1,75 @@
+"""Provider service for Qubex-backed Qiskit backends."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any
+
+from qiskit.providers import BackendV2
+from qiskit.providers.exceptions import QiskitBackendNotFoundError
+
+from .backend import QubexBackend
+from .estimator import QubexEstimatorV2
+from .sampler import QubexSamplerV2
+from .target import QubexTargetSource
+
+
+class QubexProvider:
+    """Create Qiskit backends and primitives from Qubex system metadata."""
+
+    def __init__(
+        self,
+        qubex: QubexTargetSource | None = None,
+        *,
+        name: str = "qubex_simulator",
+        num_qubits: int | None = None,
+        coupling_map: Iterable[tuple[int, int]] | None = None,
+        basis_gates: Iterable[str] | None = None,
+        backend_cls: type[QubexBackend] = QubexBackend,
+        **backend_options: Any,
+    ) -> None:
+        self._backend = backend_cls(
+            qubex,
+            name=name,
+            num_qubits=num_qubits,
+            coupling_map=coupling_map,
+            basis_gates=basis_gates,
+            provider=self,
+            **backend_options,
+        )
+
+    def backends(self, name: str | None = None, **filters: Any) -> list[BackendV2]:
+        """Return provider backends matching the optional name and attributes."""
+        backend = self._backend
+        if name is not None and backend.name != name:
+            return []
+        for attr, expected in filters.items():
+            if not hasattr(backend, attr) or getattr(backend, attr) != expected:
+                return []
+        return [backend]
+
+    def get_backend(self, name: str | None = None, **filters: Any) -> BackendV2:
+        """Return the single matching Qubex backend."""
+        matches = self.backends(name=name, **filters)
+        if not matches:
+            requested = name or self._backend.name
+            raise QiskitBackendNotFoundError(f"No backend matches {requested!r}.")
+        return matches[0]
+
+    def get_sampler(
+        self,
+        *,
+        backend: QubexBackend | None = None,
+        **options: Any,
+    ) -> QubexSamplerV2:
+        """Return a Qiskit V2 Sampler for a Qubex backend."""
+        return QubexSamplerV2(backend or self._backend, **options)
+
+    def get_estimator(
+        self,
+        *,
+        backend: QubexBackend | None = None,
+        **options: Any,
+    ) -> QubexEstimatorV2:
+        """Return a Qiskit V2 Estimator for a Qubex backend."""
+        return QubexEstimatorV2(backend or self._backend, **options)
