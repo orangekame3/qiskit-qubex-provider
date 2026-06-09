@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "qiskit-qubex-provider"
 version = "0.1.0"
-description = "Qiskit provider for Qubex targets and local execution"
+description = "Qiskit provider for Qubex targets and hardware execution"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "Apache-2.0"

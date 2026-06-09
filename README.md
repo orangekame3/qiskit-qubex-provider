@@ -1,6 +1,7 @@
 # qiskit-qubex-provider
 
-Qiskit provider for Qubex targets and local Qiskit execution.
+Qiskit provider for Qubex targets, Qiskit transpilation, and Qubex hardware
+execution.
 
 ```python
 from qiskit import QuantumCircuit, transpile

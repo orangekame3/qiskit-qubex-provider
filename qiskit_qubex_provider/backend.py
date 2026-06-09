@@ -16,11 +16,11 @@ class QubexBackend(BackendV2):
     """BackendV2 exposing Qubex topology and metadata to Qiskit.
 
     The backend builds a Qiskit :class:`~qiskit.transpiler.Target` from a Qubex
-    system, target registry, qubit count, or explicit coupling map. Execution is
-    delegated to Qiskit's local :class:`~qiskit.providers.basic_provider.BasicSimulator`.
-    This keeps the provider usable for transpilation and local workflow tests
-    while preserving the Qubex object as backend metadata for future hardware
-    execution adapters.
+    system, target registry, qubit count, or explicit coupling map. When a
+    Qubex executor is configured, ``run(...)`` delegates to that executor for
+    hardware execution. Otherwise, ``run(...)`` falls back to Qiskit's local
+    :class:`~qiskit.providers.basic_provider.BasicSimulator` for transpilation
+    and workflow tests.
     """
 
     def __init__(
@@ -54,7 +54,7 @@ class QubexBackend(BackendV2):
 
     @classmethod
     def _default_options(cls) -> Options:
-        """Return run options accepted by the local simulator."""
+        """Return default run options shared by simulator and executor paths."""
         return Options(shots=1024, memory=False, seed_simulator=None)
 
     @property
@@ -73,7 +73,7 @@ class QubexBackend(BackendV2):
         return self._qubex
 
     def run(self, run_input: Any, **options: Any):
-        """Run circuits on Qiskit's local basic simulator.
+        """Run circuits through the configured executor or local simulator.
 
         Args:
             run_input: A circuit or iterable of circuits.
