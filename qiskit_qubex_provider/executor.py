@@ -71,6 +71,7 @@ class QubexPulseExecutor:
         circuits = _normalize_circuits(run_input)
         shots = int(options.pop("shots", 1024))
         memory = bool(options.pop("memory", False))
+        options.pop("seed_simulator", None)
         job_id = str(uuid.uuid4())
         executions = [
             self._execute_circuit(circuit, shots=shots, options=options)

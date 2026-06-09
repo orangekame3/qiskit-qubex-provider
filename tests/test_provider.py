@@ -516,7 +516,12 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
     circuit.cx(0, 1)
     circuit.measure([0, 1], [0, 1])
 
-    result = provider.get_backend().run(circuit, shots=5).result()
+    result = provider.get_backend().run(
+        circuit,
+        shots=5,
+        seed_simulator=1234,
+        acquisition_timeout=30.0,
+    ).result()
 
     assert isinstance(provider.get_backend()._executor, QubexPulseExecutor)
     assert result.get_counts() == {"01": 3, "10": 2}
@@ -524,6 +529,8 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
     assert execute_call["n_shots"] == 5
     assert execute_call["state_classification"] is True
     assert execute_call["final_measurement"] is False
+    assert execute_call["acquisition_timeout"] == 30.0
+    assert "seed_simulator" not in execute_call
 
 
 @pytest.mark.parametrize(
