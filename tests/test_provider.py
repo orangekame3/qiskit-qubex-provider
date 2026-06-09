@@ -533,6 +533,45 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
     assert "seed_simulator" not in execute_call
 
 
+def test_qubex_executor_implicit_final_measurement_sets_memory_slots(monkeypatch) -> None:
+    class FakeMeasureResult:
+        def get_counts(self, targets):
+            assert tuple(targets) == ("Q0", "Q1")
+            return {"10": 3, "01": 2}
+
+    class FakeMeasurementService:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, **kwargs):
+            self.calls.append(kwargs)
+            return FakeMeasureResult()
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    experiment = FakeExperiment()
+    backend = QubexProvider.from_experiment(experiment).get_backend()
+    circuit = QuantumCircuit(2)
+    circuit.x(0)
+
+    result = backend.run(circuit, shots=5).result()
+
+    assert result.results[0].header["memory_slots"] == 2
+    assert result.get_counts() == {"01": 3, "10": 2}
+    assert experiment.measurement_service.calls[0]["final_measurement"] is True
+
+
 @pytest.mark.parametrize(
     "raw_result",
     [
