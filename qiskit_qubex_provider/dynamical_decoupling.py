@@ -79,6 +79,34 @@ def build_dynamical_decoupling_pass_manager(
     return PassManager(passes)
 
 
+def build_topology_aware_dynamical_decoupling_pass_manager(
+    backend: Any | None = None,
+    *,
+    target: Target | None = None,
+    scheduling_method: str = "alap",
+    skip_reset_qubits: bool = True,
+    min_duration: int | None = None,
+    skip_dd_threshold: float = 1.0,
+) -> PassManager:
+    """Return a topology-aware dynamical decoupling pass manager.
+
+    This is a convenience wrapper around Qiskit's
+    ``ContextAwareDynamicalDecoupling``. It uses the backend/target coupling map
+    to choose mutually orthogonal X-sequence DD on adjacent qubits and around
+    CX/ECR-like interactions. It is topology-aware, but not a global optimizer
+    over all possible DD sequences.
+    """
+    return build_dynamical_decoupling_pass_manager(
+        backend,
+        target=target,
+        scheduling_method=scheduling_method,
+        skip_reset_qubits=skip_reset_qubits,
+        context_aware=True,
+        min_duration=min_duration,
+        skip_dd_threshold=skip_dd_threshold,
+    )
+
+
 def _schedule_analysis_pass(method: str, target: Target) -> Any:
     normalized = method.lower()
     if normalized == "alap":
