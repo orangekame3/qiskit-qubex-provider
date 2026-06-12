@@ -2518,6 +2518,96 @@ def test_topology_aware_dynamical_decoupling_helper_runs() -> None:
     assert "delay" in dd_circuit.count_ops()
 
 
+def _fixed_interval_dd_backend(qubit_labels=("Q0", "Q1")):
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        dt = 1e-9
+
+        def __init__(self):
+            self.qubit_labels = qubit_labels
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    return QubexProvider.from_experiment(FakeExperiment()).get_backend()
+
+
+def test_fixed_interval_dd_repeats_sequence_per_window() -> None:
+    backend = _fixed_interval_dd_backend()
+    # x180 is 8 ns in the duration fixtures; dt is 1 ns.
+    circuit = QuantumCircuit(2)
+    circuit.x(0)
+    circuit.delay(400, 0, unit="ns")
+    circuit.x(0)
+    circuit.x(1)
+    circuit.delay(100, 1, unit="ns")
+    circuit.x(1)
+
+    dd_circuit = build_dynamical_decoupling_pass_manager(
+        backend,
+        sequence="xx",
+        pulse_interval=50e-9,
+        scheduling_method="asap",
+    ).run(circuit)
+
+    # Windows: q0 400 ns -> 4 reps (8 X); q1 100 ns -> 1 rep (2 X) plus the
+    # trailing 300 ns idle until the circuit end -> 3 reps (6 X). Original
+    # circuit contributes 4 X.
+    assert dd_circuit.count_ops()["x"] == 4 + 8 + 2 + 6
+
+
+def test_fixed_interval_dd_falls_back_for_short_windows() -> None:
+    backend = _fixed_interval_dd_backend(qubit_labels=("Q0",))
+    circuit = QuantumCircuit(1)
+    circuit.x(0)
+    circuit.delay(12, 0, unit="ns")  # too short for even one XX repetition
+    circuit.x(0)
+
+    dd_circuit = build_dynamical_decoupling_pass_manager(
+        backend,
+        sequence="xx",
+        pulse_interval=50e-9,
+        scheduling_method="asap",
+    ).run(circuit)
+
+    assert dd_circuit.count_ops()["x"] == 2
+
+
+def test_fixed_interval_dd_keeps_odd_base_sequences_identity() -> None:
+    backend = _fixed_interval_dd_backend(qubit_labels=("Q0",))
+    circuit = QuantumCircuit(1)
+    circuit.x(0)
+    circuit.delay(300, 0, unit="ns")  # round(300 / 100) = 3 -> bumped to 4
+    circuit.x(0)
+
+    dd_circuit = build_dynamical_decoupling_pass_manager(
+        backend,
+        sequence="hahn",
+        pulse_interval=100e-9,
+        scheduling_method="asap",
+    ).run(circuit)
+
+    inserted = dd_circuit.count_ops()["x"] - 2
+    assert inserted == 4
+
+
+def test_fixed_interval_dd_rejects_conflicting_options() -> None:
+    backend = _fixed_interval_dd_backend(qubit_labels=("Q0",))
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        build_dynamical_decoupling_pass_manager(
+            backend, pulse_interval=50e-9, spacing=[0.5, 0.5]
+        )
+    with pytest.raises(ValueError, match="context_aware"):
+        build_dynamical_decoupling_pass_manager(
+            backend, pulse_interval=50e-9, context_aware=True
+        )
+    with pytest.raises(ValueError, match="positive"):
+        build_dynamical_decoupling_pass_manager(backend, pulse_interval=0.0)
+
+
 def test_transpile_scheduling_decomposes_parameterized_rotations() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
