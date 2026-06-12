@@ -109,6 +109,7 @@ estimator = provider.get_estimator()  # hardware-sampled with an executor, exact
 | Internals: frame tracking, timing model, sampling grid | [docs/hardware-execution-notes.md](docs/hardware-execution-notes.md) |
 | Notebook: end-to-end tour (topology → transpile → pulses → visualization) | [examples/tutorial.ipynb](examples/tutorial.ipynb) |
 | Notebook: mid-circuit measurement | [examples/mid-circuit-measurement.ipynb](examples/mid-circuit-measurement.ipynb) |
+| Notebook: dynamical decoupling | [examples/dynamical-decoupling.ipynb](examples/dynamical-decoupling.ipynb) |
 
 ## Development
 

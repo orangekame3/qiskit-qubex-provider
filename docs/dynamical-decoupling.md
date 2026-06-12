@@ -48,4 +48,6 @@ global optimizer over every possible DD sequence.
 
 The resulting scheduled circuit can be validated and executed like any other
 (see [hardware-execution.md](hardware-execution.md)); inserted DD pulses and
-delays become calibrated Qubex pulses and `Blank` padding.
+delays become calibrated Qubex pulses and `Blank` padding. A runnable
+example with pulse-level before/after timelines lives at
+[examples/dynamical-decoupling.ipynb](../examples/dynamical-decoupling.ipynb).

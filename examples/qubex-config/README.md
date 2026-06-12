@@ -2,7 +2,8 @@
 
 A minimal, self-contained Qubex system configuration that lets the example
 notebooks ([tutorial.ipynb](../tutorial.ipynb),
-[mid-circuit-measurement.ipynb](../mid-circuit-measurement.ipynb))
+[mid-circuit-measurement.ipynb](../mid-circuit-measurement.ipynb),
+[dynamical-decoupling.ipynb](../dynamical-decoupling.ipynb))
 construct a **real `qubex.Experiment`** without hardware:
 
 ```python
