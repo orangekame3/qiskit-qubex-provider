@@ -1,0 +1,7 @@
+# Wiring catalog for the qiskit-qubex-provider example notebook.
+4Q-DEMO-SYS:
+  - mux: 0
+    ctrl: [DEMO1:5, DEMO1:0, DEMO1:2, DEMO1:6]
+    read_out: DEMO2:1
+    read_in: DEMO2:0
+    pump: DEMO2:3

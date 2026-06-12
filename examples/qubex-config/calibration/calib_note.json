@@ -1,0 +1,106 @@
+{
+    "cr_params": {
+        "Q00-Q01": {
+            "cancel_amplitude": 0.0335,
+            "cancel_beta": 0.0,
+            "cancel_phase": 2.55,
+            "cr_amplitude": 0.7812,
+            "cr_beta": 0.2059,
+            "cr_phase": 0.7159,
+            "duration": 272.0,
+            "ramptime": 16.0,
+            "rotary_amplitude": 0.0262,
+            "target": "Q00-Q01",
+            "timestamp": "2026-01-01 00:00:00",
+            "zx_rotation_rate": 0.0005504
+        },
+        "Q00-Q02": {
+            "cancel_amplitude": 0.014,
+            "cancel_beta": 0.0,
+            "cancel_phase": 0.052,
+            "cr_amplitude": 1.0257,
+            "cr_beta": 0.0,
+            "cr_phase": 3.0018,
+            "duration": 432.0,
+            "ramptime": 16.0,
+            "rotary_amplitude": 0.0,
+            "target": "Q00-Q02",
+            "timestamp": "2026-01-01 00:00:00",
+            "zx_rotation_rate": -0.0010084
+        },
+        "Q03-Q02": {
+            "cancel_amplitude": 0.0265,
+            "cancel_beta": 0.0,
+            "cancel_phase": 2.3898,
+            "cr_amplitude": 0.7191,
+            "cr_beta": 0.176,
+            "cr_phase": 1.0369,
+            "duration": 304.0,
+            "ramptime": 16.0,
+            "rotary_amplitude": 0.0237,
+            "target": "Q03-Q02",
+            "timestamp": "2026-01-01 00:00:00",
+            "zx_rotation_rate": 0.0004878
+        }
+    },
+    "drag_hpi_params": {
+        "Q00": {
+            "amplitude": 0.3033,
+            "beta": 0.7235,
+            "duration": 16,
+            "target": "Q00",
+            "timestamp": "2026-01-01 00:00:00"
+        },
+        "Q01": {
+            "amplitude": 0.208,
+            "beta": 0.4656,
+            "duration": 16,
+            "target": "Q01",
+            "timestamp": "2026-01-01 00:00:00"
+        },
+        "Q02": {
+            "amplitude": 0.4638,
+            "beta": -0.5595,
+            "duration": 16,
+            "target": "Q02",
+            "timestamp": "2026-01-01 00:00:00"
+        },
+        "Q03": {
+            "amplitude": 0.214,
+            "beta": 0.4932,
+            "duration": 16,
+            "target": "Q03",
+            "timestamp": "2026-01-01 00:00:00"
+        }
+    },
+    "drag_pi_params": {
+        "Q00": {
+            "amplitude": 0.4272,
+            "beta": 1.1234,
+            "duration": 24,
+            "target": "Q00",
+            "timestamp": "2026-01-01 00:00:00"
+        },
+        "Q01": {
+            "amplitude": 0.2767,
+            "beta": 0.2385,
+            "duration": 24,
+            "target": "Q01",
+            "timestamp": "2026-01-01 00:00:00"
+        },
+        "Q02": {
+            "amplitude": 0.6737,
+            "beta": -0.1322,
+            "duration": 24,
+            "target": "Q02",
+            "timestamp": "2026-01-01 00:00:00"
+        },
+        "Q03": {
+            "amplitude": 0.2858,
+            "beta": 0.3857,
+            "duration": 24,
+            "target": "Q03",
+            "timestamp": "2026-01-01 00:00:00"
+        }
+    }
+}

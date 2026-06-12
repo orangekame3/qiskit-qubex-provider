@@ -135,7 +135,9 @@ are intended for transpilation metadata, not pulse execution.
 - Mid-circuit measurement is supported without feedback. Each measurement of
   a qubit becomes a `(label, capture_index)` pair, and Qubex's
   `MultipleMeasureResult.get_counts` is queried with exactly those pairs, so
-  repeated measurements of one qubit map to distinct clbits.
+  repeated measurements of one qubit map to distinct clbits. A runnable
+  example with the pulse-level timeline lives at
+  [examples/mid-circuit-measurement.ipynb](../examples/mid-circuit-measurement.ipynb).
 - Bit ordering follows Qiskit conventions: clbit 0 is the least significant
   bit of the hex count keys.
 - Count totals (and memory length when `memory=True`) are validated against

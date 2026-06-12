@@ -1,0 +1,6 @@
+# System catalog for the qiskit-qubex-provider example notebook.
+4Q-DEMO-SYS:
+  chip_id: 16Q-DEMO
+  backend: quel1
+  quel1:
+    clock_master: 10.0.0.10

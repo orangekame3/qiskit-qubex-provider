@@ -1,0 +1,11 @@
+# Box catalog for the qiskit-qubex-provider example notebook.
+DEMO1:
+  name: "Demo control box"
+  type: "qube-riken-b"
+  address: "10.0.0.1"
+  adapter: "000000000000000"
+DEMO2:
+  name: "Demo readout box"
+  type: "quel1-a"
+  address: "10.0.0.2"
+  adapter: "000000000000001"

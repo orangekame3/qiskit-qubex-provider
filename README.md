@@ -24,12 +24,17 @@ local checkout. To install this provider and Qubex from Git in one command:
 pip install "qiskit-qubex-provider[qubex] @ git+https://github.com/orangekame3/qiskit-qubex-provider.git"
 ```
 
-For local Qubex development, install the checkout explicitly. Some Qubex
-imports also need optional local backend packages:
+The `qubex` extra also pulls in `qxdriver-quel1` (from the Qubex
+repository), which `qubex.Experiment` imports even in mock mode — a plain
+`pip install qubex@git+...` does not include it and fails with
+`ModuleNotFoundError: No module named 'qxdriver_quel1'`.
+
+For local Qubex development, install the checkout explicitly. The
+`qxdriver-quel1` backend package is required to construct an `Experiment`:
 
 ```bash
 uv pip install -e ../qubex
-uv pip install -e ../qubex/packages/qxdriver-quel1  # if required
+uv pip install -e ../qubex/packages/qxdriver-quel1
 ```
 
 ## Quick start (no hardware)
@@ -102,11 +107,14 @@ estimator = provider.get_estimator()  # hardware-sampled with an executor, exact
 | Dynamical decoupling pass managers | [docs/dynamical-decoupling.md](docs/dynamical-decoupling.md) |
 | Comparing pulse schedules across scheduling methods | [docs/pulse-schedule-visualization.md](docs/pulse-schedule-visualization.md) |
 | Internals: frame tracking, timing model, sampling grid | [docs/hardware-execution-notes.md](docs/hardware-execution-notes.md) |
+| Notebook: end-to-end tour (topology → transpile → pulses → visualization) | [examples/tutorial.ipynb](examples/tutorial.ipynb) |
+| Notebook: mid-circuit measurement | [examples/mid-circuit-measurement.ipynb](examples/mid-circuit-measurement.ipynb) |
 
 ## Development
 
-Set up the dev environment with Qubex (from Git) and the plotting extras in
-one command, then run the tests:
+Set up the dev environment with Qubex (from Git, including its
+`qxdriver-quel1` backend package) and the plotting extras in one command,
+then run the tests:
 
 ```bash
 uv sync --extra qubex --extra plot --extra dev

@@ -1,0 +1,6 @@
+meta:
+  description: ZX90 gate fidelities (representative demo values)
+data:
+  Q00-Q01: 0.9315
+  Q03-Q02: 0.9036
+  Q00-Q02: 0.7056

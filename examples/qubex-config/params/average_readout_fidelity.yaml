@@ -1,0 +1,7 @@
+meta:
+  description: Average readout fidelities (representative demo values)
+data:
+  Q00: 0.9494
+  Q01: 0.943
+  Q02: 0.5635
+  Q03: 0.6503

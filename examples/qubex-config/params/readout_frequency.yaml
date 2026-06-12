@@ -1,0 +1,8 @@
+meta:
+  description: Demo readout frequencies
+  unit: GHz
+data:
+  0: 10.706502
+  1: 9.883797
+  2: 10.047309
+  3: 9.889833
