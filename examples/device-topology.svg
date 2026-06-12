@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720" role="img" aria-label="example-small device topology">
+<defs>
+<marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#64748b" /></marker>
+<filter id="shadow" x="-25%" y="-25%" width="150%" height="150%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.18" /></filter>
+</defs>
+<rect width="100%" height="100%" fill="#f8fafc" />
+<text x="48" y="52" fill="#0f172a" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">example-small</text>
+<text x="48" y="80" fill="#64748b" font-family="Inter, Arial, sans-serif" font-size="14">4 qubits / 2 directed couplings / calibrated 2026-01-02T03:04:05Z</text>
+<line x1="116.00" y1="136.00" x2="844.00" y2="136.00" stroke="#65a30d" stroke-width="5" stroke-linecap="round" marker-end="url(#arrow)" opacity="0.82"><title>q0 -> q1, coupling fidelity 0.9650, rzx90 272 ns</title></line>
+<line x1="116.00" y1="632.00" x2="844.00" y2="632.00" stroke="#d97706" stroke-width="5" stroke-linecap="round" marker-end="url(#arrow)" opacity="0.82"><title>q2 -> q3, coupling fidelity 0.9180, rzx90 288 ns</title></line>
+<circle cx="88.00" cy="136.00" r="30" fill="#16a34a" stroke="#ffffff" stroke-width="4" filter="url(#shadow)"><title>Q00, logical q0, qubit fidelity 0.9920, readout fidelity 0.9785</title></circle>
+<text x="88.00" y="141.00" text-anchor="middle" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Q00</text>
+<text x="88.00" y="184.00" text-anchor="middle" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="12">q0 / 0.992</text>
+<circle cx="872.00" cy="136.00" r="30" fill="#16a34a" stroke="#ffffff" stroke-width="4" filter="url(#shadow)"><title>Q01, logical q1, qubit fidelity 0.9860, readout fidelity 0.9735</title></circle>
+<text x="872.00" y="141.00" text-anchor="middle" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Q01</text>
+<text x="872.00" y="184.00" text-anchor="middle" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="12">q1 / 0.986</text>
+<circle cx="88.00" cy="632.00" r="30" fill="#65a30d" stroke="#ffffff" stroke-width="4" filter="url(#shadow)"><title>Q02, logical q2, qubit fidelity 0.9730, readout fidelity 0.9625</title></circle>
+<text x="88.00" y="637.00" text-anchor="middle" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Q02</text>
+<text x="88.00" y="680.00" text-anchor="middle" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="12">q2 / 0.973</text>
+<circle cx="872.00" cy="632.00" r="30" fill="#d97706" stroke="#ffffff" stroke-width="4" filter="url(#shadow)"><title>Q03, logical q3, qubit fidelity 0.9410, readout fidelity 0.9435</title></circle>
+<text x="872.00" y="637.00" text-anchor="middle" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Q03</text>
+<text x="872.00" y="680.00" text-anchor="middle" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="12">q3 / 0.941</text>
+</svg>

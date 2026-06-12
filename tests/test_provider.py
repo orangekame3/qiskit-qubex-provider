@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from math import pi
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +19,7 @@ from qiskit_qubex_provider import (
     QubexSamplerV2,
     QUBEX_NATIVE_BASIS_GATES,
     build_device_topology,
+    build_device_topology_svg,
     build_dynamical_decoupling_pass_manager,
     build_topology_aware_dynamical_decoupling_pass_manager,
     build_qubex_target,
@@ -26,6 +28,9 @@ from qiskit_qubex_provider import (
 )
 from qiskit_qubex_provider.device_topology import main as device_topology_main
 import qiskit_qubex_provider.executor as executor_module
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class DurationObject:
@@ -315,6 +320,183 @@ def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
     assert backend.target["cx"][(0, 1)].duration == pytest.approx(272e-9)
 
 
+def test_build_device_topology_accepts_qdash_style_request(tmp_path) -> None:
+    calib_note_path = tmp_path / "calib_note.json"
+    calib_note_path.write_text(
+        json.dumps(
+            {
+                "drag_hpi_params": {
+                    "Q00": {"duration": 16},
+                    "Q01": {"duration": 18},
+                    "Q02": {"duration": 20},
+                },
+                "drag_pi_params": {
+                    "Q00": {"duration": 24},
+                    "Q01": {"duration": 26},
+                    "Q02": {"duration": 28},
+                },
+                "cr_params": {
+                    "Q00-Q01": {"duration": 272},
+                    "Q01-Q02": {"duration": 288},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    params_dir = tmp_path / "params"
+    params_dir.mkdir()
+    (params_dir / "x90_gate_fidelity.yaml").write_text(
+        "data:\n  Q00: 0.99\n  Q01: 0.98\n  Q02: 0.91\n",
+        encoding="utf-8",
+    )
+    (params_dir / "zx90_gate_fidelity.yaml").write_text(
+        "data:\n  Q00-Q01: 0.97\n  Q01-Q02: 0.96\n",
+        encoding="utf-8",
+    )
+    (params_dir / "average_readout_fidelity.yaml").write_text(
+        "data:\n  Q00: 0.99\n  Q01: 0.98\n  Q02: 0.97\n",
+        encoding="utf-8",
+    )
+
+    topology = build_device_topology(
+        calib_note_path=calib_note_path,
+        params_dir=params_dir,
+        request={
+            "name": "request-device",
+            "device_id": "request-device",
+            "qubits": ["Q00", "1", "2"],
+            "exclude_couplings": ["Q01-Q02"],
+            "condition": {
+                "qubit_fidelity": {"min": 0.95, "max": 1.0},
+                "coupling_fidelity": {"min": 0.95, "max": 1.0},
+                "readout_fidelity": {"min": 0.95, "max": 1.0},
+                "only_maximum_connected": False,
+            },
+        },
+        topology={"couplings": [[0, 1], [1, 2]]},
+    )
+
+    assert topology["name"] == "request-device"
+    assert [qubit["physical_id"] for qubit in topology["qubits"]] == [0, 1]
+    assert topology["couplings"] == [
+        {
+            "control": 0,
+            "target": 1,
+            "fidelity": 0.97,
+            "gate_duration": {"rzx90": 272},
+        }
+    ]
+
+
+def test_build_device_topology_request_filters_by_selected_metrics(tmp_path) -> None:
+    calib_note_path = tmp_path / "calib_note.json"
+    calib_note_path.write_text(
+        json.dumps(
+            {
+                "drag_hpi_params": {
+                    "Q00": {"duration": 16},
+                    "Q01": {"duration": 18},
+                    "Q02": {"duration": 20},
+                },
+                "drag_pi_params": {
+                    "Q00": {"duration": 24},
+                    "Q01": {"duration": 26},
+                    "Q02": {"duration": 28},
+                },
+                "cr_params": {
+                    "Q00-Q01": {"duration": 272},
+                    "Q01-Q02": {"duration": 288},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    params_dir = tmp_path / "params"
+    params_dir.mkdir()
+    (params_dir / "x90_gate_fidelity.yaml").write_text(
+        "data:\n  Q00: 0.99\n  Q01: 0.99\n  Q02: 0.99\n",
+        encoding="utf-8",
+    )
+    (params_dir / "custom_qubit_score.yaml").write_text(
+        "data:\n  Q00: 0.92\n  Q01: 0.96\n  Q02: 0.98\n",
+        encoding="utf-8",
+    )
+    (params_dir / "custom_coupling_score.yaml").write_text(
+        "data:\n  Q00-Q01: 0.94\n  Q01-Q02: 0.99\n",
+        encoding="utf-8",
+    )
+    (params_dir / "custom_readout_score.yaml").write_text(
+        "data:\n  Q00: 0.99\n  Q01: 0.97\n  Q02: 0.93\n",
+        encoding="utf-8",
+    )
+
+    topology = build_device_topology(
+        calib_note_path=calib_note_path,
+        params_dir=params_dir,
+        request={
+            "qubits": ["0", "1", "2"],
+            "condition": {
+                "qubit_fidelity": {
+                    "metric": "custom_qubit_score",
+                    "min": 0.95,
+                    "max": 1.0,
+                },
+                "coupling_fidelity": {
+                    "metric": "custom_coupling_score",
+                    "min": 0.95,
+                    "max": 1.0,
+                },
+                "readout_fidelity": {
+                    "metric": "custom_readout_score",
+                    "min": 0.95,
+                    "max": 1.0,
+                    "is_within_24h": True,
+                },
+                "only_maximum_connected": False,
+            },
+        },
+        topology={"couplings": [[0, 1], [1, 2]]},
+    )
+
+    assert [qubit["physical_id"] for qubit in topology["qubits"]] == [1]
+    assert topology["couplings"] == []
+
+
+def test_build_device_topology_skips_couplings_without_fidelity_metric(tmp_path) -> None:
+    calib_note_path = tmp_path / "calib_note.json"
+    calib_note_path.write_text(
+        json.dumps(
+            {
+                "drag_hpi_params": {"Q00": {"duration": 16}, "Q01": {"duration": 18}},
+                "drag_pi_params": {"Q00": {"duration": 24}, "Q01": {"duration": 26}},
+                "cr_params": {"Q00-Q01": {"duration": 272}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    params_dir = tmp_path / "params"
+    params_dir.mkdir()
+    (params_dir / "x90_gate_fidelity.yaml").write_text(
+        "data:\n  Q00: 0.99\n  Q01: 0.98\n",
+        encoding="utf-8",
+    )
+    (params_dir / "average_readout_fidelity.yaml").write_text(
+        "data:\n  Q00: 0.99\n  Q01: 0.98\n",
+        encoding="utf-8",
+    )
+
+    topology = build_device_topology(
+        calib_note_path=calib_note_path,
+        params_dir=params_dir,
+        topology={"couplings": [[0, 1]]},
+        qubits=[0, 1],
+        only_maximum_connected=False,
+    )
+
+    assert [qubit["physical_id"] for qubit in topology["qubits"]] == [0, 1]
+    assert topology["couplings"] == []
+
+
 def test_write_device_topology_cli(tmp_path) -> None:
     calib_note_path = tmp_path / "calib_note.json"
     calib_note_path.write_text(
@@ -338,6 +520,21 @@ def test_write_device_topology_cli(tmp_path) -> None:
     assert json.loads(output_path.read_text(encoding="utf-8"))["couplings"] == topology[
         "couplings"
     ]
+    default_image_path = tmp_path / "device-topology.svg"
+    assert default_image_path.exists()
+    svg = default_image_path.read_text(encoding="utf-8")
+    assert "<svg" in svg
+    assert "Q00" in svg
+
+    explicit_image_path = tmp_path / "explicit-topology.svg"
+    write_device_topology(
+        tmp_path / "explicit-device-topology.json",
+        output_image=explicit_image_path,
+        calib_note_path=calib_note_path,
+        qubits=[0, 1],
+        topology={"couplings": [[0, 1]]},
+    )
+    assert explicit_image_path.exists()
 
     cli_output_path = tmp_path / "cli-device-topology.json"
     assert (
@@ -356,6 +553,105 @@ def test_write_device_topology_cli(tmp_path) -> None:
     assert json.loads(cli_output_path.read_text(encoding="utf-8"))["qubits"][0][
         "physical_id"
     ] == 0
+    assert (tmp_path / "cli-device-topology.svg").exists()
+
+    no_image_path = tmp_path / "no-image-device-topology.json"
+    assert (
+        device_topology_main(
+            [
+                "--calib-note",
+                str(calib_note_path),
+                "--qubits",
+                "0,1",
+                "--output-json",
+                str(no_image_path),
+                "--no-output-image",
+            ]
+        )
+        == 0
+    )
+    assert not (tmp_path / "no-image-device-topology.svg").exists()
+
+    request_path = tmp_path / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "name": "cli-request-device",
+                "device_id": "cli-request-device",
+                "qubits": ["1"],
+                "exclude_couplings": [],
+                "condition": {
+                    "qubit_fidelity": {"min": 0.0, "max": 1.0},
+                    "coupling_fidelity": {"min": 0.0, "max": 1.0},
+                    "readout_fidelity": {"min": 0.0, "max": 1.0},
+                    "only_maximum_connected": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    request_output_path = tmp_path / "request-device-topology.json"
+    assert (
+        device_topology_main(
+            [
+                "--calib-note",
+                str(calib_note_path),
+                "--request-json",
+                str(request_path),
+                "--output-json",
+                str(request_output_path),
+                "--no-output-image",
+            ]
+        )
+        == 0
+    )
+    request_topology = json.loads(request_output_path.read_text(encoding="utf-8"))
+    assert request_topology["name"] == "cli-request-device"
+    assert [qubit["physical_id"] for qubit in request_topology["qubits"]] == [1]
+
+
+def test_build_device_topology_svg_renders_topology() -> None:
+    svg = build_device_topology_svg(
+        {
+            "name": "svg-device",
+            "qubits": [
+                {
+                    "id": 0,
+                    "physical_id": 0,
+                    "position": {"x": 0, "y": 0},
+                    "fidelity": 0.99,
+                },
+                {
+                    "id": 1,
+                    "physical_id": 1,
+                    "position": {"x": 1, "y": 0},
+                    "fidelity": 0.94,
+                },
+            ],
+            "couplings": [{"control": 0, "target": 1, "fidelity": 0.97}],
+            "calibrated_at": "2026-01-02T03:04:05Z",
+        }
+    )
+
+    assert svg.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+    assert "svg-device" in svg
+    assert "2 qubits / 1 directed couplings" in svg
+    assert "Q00" in svg
+    assert "Q01" in svg
+    assert "q0 -> q1" in svg
+
+
+def test_device_topology_examples_are_loadable() -> None:
+    topology = json.loads(
+        (REPO_ROOT / "examples" / "device-topology.json").read_text(encoding="utf-8")
+    )
+    svg = (REPO_ROOT / "examples" / "device-topology.svg").read_text(encoding="utf-8")
+
+    assert topology["name"] == "example-small"
+    assert len(topology["qubits"]) == 4
+    assert len(topology["couplings"]) == 2
+    assert "<svg" in svg
+    assert "q0 -> q1" in svg
 
 
 def test_backend_runs_qiskit_circuit_locally() -> None:
