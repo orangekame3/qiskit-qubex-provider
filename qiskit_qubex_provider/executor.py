@@ -200,14 +200,17 @@ class QubexPulseExecutor:
                     self._advance_offsets(channel_offsets, labels, duration_ns)
                 elif name == "ecr":
                     sub_schedule = pulse.zx90(labels[0], labels[1], echo=True)
+                    self._sync_cr_channel_frames(schedule, sub_schedule)
                     schedule.call(sub_schedule)
                     self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
                 elif name == "cx":
                     sub_schedule = pulse.cx(labels[0], labels[1])
+                    self._sync_cr_channel_frames(schedule, sub_schedule)
                     schedule.call(sub_schedule)
                     self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
                 elif name == "cz":
                     sub_schedule = pulse.cz(labels[0], labels[1])
+                    self._sync_cr_channel_frames(schedule, sub_schedule)
                     schedule.call(sub_schedule)
                     self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
                 else:
@@ -263,11 +266,17 @@ class QubexPulseExecutor:
                 elif name == "ry":
                     self._add_ry(schedule, pulse, labels[0], float(operation.params[0]))
                 elif name == "ecr":
-                    schedule.call(pulse.zx90(labels[0], labels[1], echo=True))
+                    sub_schedule = pulse.zx90(labels[0], labels[1], echo=True)
+                    self._sync_cr_channel_frames(schedule, sub_schedule)
+                    schedule.call(sub_schedule)
                 elif name == "cx":
-                    schedule.call(pulse.cx(labels[0], labels[1]))
+                    sub_schedule = pulse.cx(labels[0], labels[1])
+                    self._sync_cr_channel_frames(schedule, sub_schedule)
+                    schedule.call(sub_schedule)
                 elif name == "cz":
-                    schedule.call(pulse.cz(labels[0], labels[1]))
+                    sub_schedule = pulse.cz(labels[0], labels[1])
+                    self._sync_cr_channel_frames(schedule, sub_schedule)
+                    schedule.call(sub_schedule)
                 else:
                     raise ValueError(
                         f"Unsupported Qiskit instruction {name!r} for Qubex pulse execution. "
@@ -632,6 +641,33 @@ class QubexPulseExecutor:
 
     def _virtual_z(self, theta: float) -> Any:
         return self._pulse_source().z90().__class__(theta)
+
+    def _sync_cr_channel_frames(self, schedule: Any, sub_schedule: Any) -> None:
+        """Align CR channel frames with their frequency-target qubit frames.
+
+        A cross-resonance channel ``Qc-Qt`` drives ``Qc`` in the frame of
+        ``Qt``, so virtual-Z rotations accumulated on ``Qt`` must also rotate
+        the frame of subsequent CR pulses on that channel. Production Qubex
+        mirrors ``VirtualZ`` onto the CR channel the same way inside its
+        ``cnot``/``cz`` constructions.
+        """
+        for label in getattr(sub_schedule, "labels", []):
+            if "-" not in label:
+                continue
+            frequency_target = label.split("-", 1)[1]
+            if frequency_target not in self._qubit_labels:
+                continue
+            delta = self._channel_frame_shift(schedule, frequency_target) - self._channel_frame_shift(schedule, label)
+            if abs(delta) > 1e-12:
+                # VirtualZ(theta) stores PhaseShift(-theta), so negate to add a raw frame shift.
+                schedule.add(label, self._virtual_z(-delta))
+
+    @staticmethod
+    def _channel_frame_shift(schedule: Any, label: str) -> float:
+        get_final_frame_shift = getattr(schedule, "get_final_frame_shift", None)
+        if get_final_frame_shift is None or label not in getattr(schedule, "labels", []):
+            return 0.0
+        return float(get_final_frame_shift(label))
 
     def _used_legacy_labels(self, circuit: QuantumCircuit) -> list[str]:
         labels: list[str] = []
