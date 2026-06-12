@@ -100,13 +100,23 @@ estimator = provider.get_estimator()  # hardware-sampled with an executor, exact
 | Hardware execution: setup, run options, supported gates, validation | [docs/hardware-execution.md](docs/hardware-execution.md) |
 | Device topology files and target generation (incl. CLI) | [docs/device-topology.md](docs/device-topology.md) |
 | Dynamical decoupling pass managers | [docs/dynamical-decoupling.md](docs/dynamical-decoupling.md) |
+| Comparing pulse schedules across scheduling methods | [docs/pulse-schedule-visualization.md](docs/pulse-schedule-visualization.md) |
 | Internals: frame tracking, timing model, sampling grid | [docs/hardware-execution-notes.md](docs/hardware-execution-notes.md) |
 
 ## Development
 
+Set up the dev environment with Qubex (from Git) and the plotting extras in
+one command, then run the tests:
+
 ```bash
+uv sync --extra qubex --extra plot --extra dev
 uv run pytest
 ```
+
+Qubex is optional for development too — without the `qubex` extra the test
+suite still passes; the tutorial notebook in `examples/` is the only part
+that requires it. To use a local Qubex checkout instead of Git, see the
+installation section above.
 
 Repository tests use synthetic topology and calibration fixtures only;
 private Qubex configuration or measured device data should stay out of CI.

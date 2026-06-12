@@ -1946,6 +1946,9 @@ def test_qubex_executor_rejects_circuit_with_too_many_qubits(monkeypatch) -> Non
 def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0", "Q1")
+        # Pin the sampling period the timing arithmetic below assumes,
+        # regardless of whether qxpulse (default 2 ns) is installed.
+        dt = 1e-9
 
         def __init__(self):
             self.pulse = DurationPulse()
@@ -1992,6 +1995,9 @@ def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
 def test_legacy_device_gateway_timing_ignores_qiskit_start_times(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0", "Q1")
+        # Pin the sampling period the timing arithmetic below assumes,
+        # regardless of whether qxpulse (default 2 ns) is installed.
+        dt = 1e-9
 
         def __init__(self):
             self.pulse = DurationPulse()
@@ -2065,6 +2071,9 @@ def test_qubex_executor_rejects_unknown_timing_policy() -> None:
 def test_qubex_executor_converts_ecr_to_echoed_zx90(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0", "Q1")
+        # Pin the sampling period the timing arithmetic below assumes,
+        # regardless of whether qxpulse (default 2 ns) is installed.
+        dt = 1e-9
 
         def __init__(self):
             self.pulse = DurationPulse()
@@ -2138,6 +2147,9 @@ def test_unscheduled_measurement_barriers_readout_to_qubit_channel(monkeypatch) 
 def test_mid_circuit_measurement_blocks_drive_channel_during_readout(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0",)
+        # Pin the sampling period the timing arithmetic below assumes,
+        # regardless of whether qxpulse (default 2 ns) is installed.
+        dt = 1e-9
 
         def __init__(self):
             self.pulse = DurationPulse()

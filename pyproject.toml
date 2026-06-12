@@ -36,6 +36,7 @@ qubex = [
 ]
 plot = [
     "kaleido",
+    "nbformat>=4.2.0",
     "plotly>=5.18.0",
 ]
 dev = [
