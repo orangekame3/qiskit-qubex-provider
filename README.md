@@ -11,9 +11,21 @@ schedules.
 uv pip install -e .
 ```
 
-`qubex` is intentionally not a hard dependency because it is commonly
-installed from a local checkout. Some Qubex imports also need optional local
-backend packages:
+Install directly from Git:
+
+```bash
+pip install "qiskit-qubex-provider @ git+https://github.com/orangekame3/qiskit-qubex-provider.git@main"
+```
+
+`qubex` is intentionally optional because it is commonly installed from a
+local checkout. To install this provider and Qubex from Git in one command:
+
+```bash
+pip install "qiskit-qubex-provider[qubex] @ git+https://github.com/orangekame3/qiskit-qubex-provider.git@main"
+```
+
+For local Qubex development, install the checkout explicitly. Some Qubex
+imports also need optional local backend packages:
 
 ```bash
 uv pip install -e ../qubex
