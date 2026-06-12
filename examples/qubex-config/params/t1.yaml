@@ -1,0 +1,8 @@
+meta:
+  description: Qubit lifetimes (representative demo values)
+  unit: µs
+data:
+  Q00: 27.1
+  Q01: 30.5
+  Q02: 4.0
+  Q03: 41.2

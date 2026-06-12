@@ -1,0 +1,10 @@
+# Chip catalog for the qiskit-qubex-provider example notebook.
+#
+# 16 qubits so that Qubex uses two-digit labels (Q00...Q15) matching the
+# example device topology; only mux 0 (Q00-Q03) is wired below.
+16Q-DEMO:
+  name: "16-qubit demo chip"
+  n_qubits: 16
+  topology:
+    type: square_lattice
+    mux_size: 4

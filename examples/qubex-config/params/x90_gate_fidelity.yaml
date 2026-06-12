@@ -1,0 +1,7 @@
+meta:
+  description: X90 gate fidelities (representative demo values)
+data:
+  Q00: 0.9986
+  Q01: 0.9954
+  Q02: 0.9927
+  Q03: 0.9755

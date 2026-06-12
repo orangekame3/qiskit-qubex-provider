@@ -235,8 +235,17 @@ def write_device_topology_image(
         output_path.write_text(build_device_topology_svg(topology), encoding="utf-8")
 
 
-def build_device_topology_figure(topology: Mapping[str, Any]):
-    """Return a Plotly figure for Device Gateway topology metadata."""
+def build_device_topology_figure(
+    topology: Mapping[str, Any],
+    *,
+    width: int | None = None,
+    height: int | None = None,
+):
+    """Return a Plotly figure for Device Gateway topology metadata.
+
+    The figure is sized to the qubit grid by default; pass ``width`` and/or
+    ``height`` to override.
+    """
     try:
         import plotly.graph_objects as go
     except ImportError as exc:
@@ -323,6 +332,15 @@ def build_device_topology_figure(topology: Mapping[str, Any]):
         )
 
     name = str(topology.get("name") or topology.get("device_id") or "Qubex")
+    # Size the figure to the qubit grid (number of distinct columns/rows).
+    grid_columns = len(
+        {_safe_float(_mapping(qubit.get("position")).get("x"), default=0.0) for qubit in qubits}
+    )
+    grid_rows = len(
+        {_safe_float(_mapping(qubit.get("position")).get("y"), default=0.0) for qubit in qubits}
+    )
+    auto_width = min(1200, max(480, 180 * max(1, grid_columns) + 80))
+    auto_height = min(900, max(380, 180 * max(1, grid_rows) + 130))
     figure.update_layout(
         title={
             "text": (
@@ -332,8 +350,8 @@ def build_device_topology_figure(topology: Mapping[str, Any]):
             "x": 0.02,
             "xanchor": "left",
         },
-        width=1200,
-        height=900,
+        width=width or auto_width,
+        height=height or auto_height,
         plot_bgcolor="#f8fafc",
         paper_bgcolor="#f8fafc",
         margin={"l": 40, "r": 40, "t": 90, "b": 40},

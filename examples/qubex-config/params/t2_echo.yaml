@@ -1,0 +1,8 @@
+meta:
+  description: Echo coherence times (representative demo values)
+  unit: µs
+data:
+  Q00: 35.6
+  Q01: 49.6
+  Q02: 7.7
+  Q03: 42.6

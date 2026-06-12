@@ -33,6 +33,9 @@ qiskit-qubex-device-topology = "qiskit_qubex_provider.device_topology:main"
 [project.optional-dependencies]
 qubex = [
     "qubex @ git+https://github.com/amachino/qubex.git",
+    # Required by qubex.Experiment (even in mock mode); lives in the qubex
+    # repository but is not pulled in by the qubex package itself.
+    "qxdriver-quel1 @ git+https://github.com/amachino/qubex.git#subdirectory=packages/qxdriver-quel1",
 ]
 plot = [
     "kaleido",

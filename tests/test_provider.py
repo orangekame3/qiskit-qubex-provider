@@ -647,9 +647,9 @@ def test_device_topology_examples_are_loadable() -> None:
     )
     svg = (REPO_ROOT / "examples" / "device-topology.svg").read_text(encoding="utf-8")
 
-    assert topology["name"] == "example-small"
+    assert topology["name"] == "4Q-DEMO"
     assert len(topology["qubits"]) == 4
-    assert len(topology["couplings"]) == 2
+    assert len(topology["couplings"]) == 3
     assert "<svg" in svg
     assert "q0 -> q1" in svg
 

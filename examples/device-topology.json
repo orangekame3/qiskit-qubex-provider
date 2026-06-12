@@ -1,6 +1,6 @@
 {
-  "name": "example-small",
-  "device_id": "example-small",
+  "name": "4Q-DEMO",
+  "device_id": "4Q-DEMO",
   "qubits": [
     {
       "id": 0,
@@ -9,15 +9,15 @@
         "x": 0.0,
         "y": 0.0
       },
-      "fidelity": 0.992,
+      "fidelity": 0.9986,
       "meas_error": {
-        "prob_meas1_prep0": 0.025,
-        "prob_meas0_prep1": 0.018,
-        "readout_assignment_error": 0.0215
+        "prob_meas1_prep0": 0.0,
+        "prob_meas0_prep1": 0.0,
+        "readout_assignment_error": 0.05059999999999998
       },
       "qubit_lifetime": {
-        "t1": 32.0,
-        "t2": 28.5
+        "t1": 27.1,
+        "t2": 35.6
       },
       "gate_duration": {
         "rz": 0,
@@ -32,20 +32,20 @@
         "x": 1.0,
         "y": 0.0
       },
-      "fidelity": 0.986,
+      "fidelity": 0.9954,
       "meas_error": {
-        "prob_meas1_prep0": 0.031,
-        "prob_meas0_prep1": 0.022,
-        "readout_assignment_error": 0.0265
+        "prob_meas1_prep0": 0.0,
+        "prob_meas0_prep1": 0.0,
+        "readout_assignment_error": 0.05700000000000005
       },
       "qubit_lifetime": {
-        "t1": 29.4,
-        "t2": 24.1
+        "t1": 30.5,
+        "t2": 49.6
       },
       "gate_duration": {
         "rz": 0,
-        "sx": 18,
-        "x": 26
+        "sx": 16,
+        "x": 24
       }
     },
     {
@@ -55,20 +55,20 @@
         "x": 0.0,
         "y": 1.0
       },
-      "fidelity": 0.973,
+      "fidelity": 0.9927,
       "meas_error": {
-        "prob_meas1_prep0": 0.042,
-        "prob_meas0_prep1": 0.033,
-        "readout_assignment_error": 0.0375
+        "prob_meas1_prep0": 0.0,
+        "prob_meas0_prep1": 0.0,
+        "readout_assignment_error": 0.4365
       },
       "qubit_lifetime": {
-        "t1": 25.7,
-        "t2": 21.9
+        "t1": 4,
+        "t2": 7.7
       },
       "gate_duration": {
         "rz": 0,
-        "sx": 20,
-        "x": 28
+        "sx": 16,
+        "x": 24
       }
     },
     {
@@ -78,20 +78,20 @@
         "x": 1.0,
         "y": 1.0
       },
-      "fidelity": 0.941,
+      "fidelity": 0.9755,
       "meas_error": {
-        "prob_meas1_prep0": 0.061,
-        "prob_meas0_prep1": 0.052,
-        "readout_assignment_error": 0.0565
+        "prob_meas1_prep0": 0.0,
+        "prob_meas0_prep1": 0.0,
+        "readout_assignment_error": 0.3497
       },
       "qubit_lifetime": {
-        "t1": 18.8,
-        "t2": 16.3
+        "t1": 41.2,
+        "t2": 42.6
       },
       "gate_duration": {
         "rz": 0,
-        "sx": 20,
-        "x": 30
+        "sx": 16,
+        "x": 24
       }
     }
   ],
@@ -99,19 +99,27 @@
     {
       "control": 0,
       "target": 1,
-      "fidelity": 0.965,
+      "fidelity": 0.9315,
       "gate_duration": {
         "rzx90": 272
       }
     },
     {
-      "control": 2,
-      "target": 3,
-      "fidelity": 0.918,
+      "control": 0,
+      "target": 2,
+      "fidelity": 0.7056,
       "gate_duration": {
-        "rzx90": 288
+        "rzx90": 432
+      }
+    },
+    {
+      "control": 3,
+      "target": 2,
+      "fidelity": 0.9036,
+      "gate_duration": {
+        "rzx90": 304
       }
     }
   ],
-  "calibrated_at": "2026-01-02T03:04:05Z"
+  "calibrated_at": "2026-06-12T11:20:12.557164Z"
 }
