@@ -390,6 +390,37 @@ def test_provider_primitives_are_executable() -> None:
     assert len(estimator.run([(circuit, SparsePauliOp("ZZ"))]).result()) == 1
 
 
+def test_sampler_constructor_options_set_delegate_defaults() -> None:
+    provider = QubexProvider(num_qubits=1)
+    circuit = QuantumCircuit(1)
+    circuit.measure_all()
+
+    sampler = provider.get_sampler(default_shots=32)
+    result = sampler.run([circuit]).result()
+
+    assert result[0].data.meas.num_shots == 32
+
+
+def test_estimator_uses_backend_estimator_only_with_executor() -> None:
+    from qiskit.primitives import BackendEstimatorV2, StatevectorEstimator
+
+    class RecordingExecutor:
+        def run(self, run_input, **options):
+            raise NotImplementedError
+
+    hardware_backend = QubexProvider(
+        num_qubits=1, executor=RecordingExecutor()
+    ).get_backend()
+    simulator_backend = QubexProvider(num_qubits=1).get_backend()
+
+    assert isinstance(
+        QubexEstimatorV2(hardware_backend)._delegate, BackendEstimatorV2
+    )
+    assert isinstance(
+        QubexEstimatorV2(simulator_backend)._delegate, StatevectorEstimator
+    )
+
+
 def test_backend_can_delegate_to_executor() -> None:
     class RecordingExecutor:
         def __init__(self) -> None:
@@ -1782,6 +1813,62 @@ def test_qubex_executor_supports_mid_circuit_measurement_without_feedback(monkey
     assert target_to_clbit == {("Q0", 0): 0, ("Q0", 1): 1}
 
 
+def test_unscheduled_measurement_barriers_readout_to_qubit_channel(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(1, 1)
+    circuit.x(0)
+    circuit.measure(0, 0)
+
+    schedule = QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+    readout_index = next(
+        index
+        for index, op in enumerate(schedule.ops)
+        if op[0] == "add" and op[2].name == "readout-Q0"
+    )
+    barriers_before_readout = [
+        op for op in schedule.ops[:readout_index] if op[0] == "barrier"
+    ]
+    assert ("barrier", ["Q0", "RQ0"]) in barriers_before_readout
+
+
+def test_mid_circuit_measurement_blocks_drive_channel_during_readout(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    # x180 is 8 ns and readout is 20 ns in the duration fixtures.
+    circuit = QuantumCircuit(1, 2)
+    circuit.x(0)
+    circuit.measure(0, 0)
+    circuit.x(0)
+    circuit.measure(0, 1)
+    circuit._op_start_times = [0, 8, 28, 36]
+    circuit._duration = 56
+    circuit._unit = "dt"
+
+    schedule = QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+    q0_ops = [op for op in schedule.ops if op[0] == "add" and op[1] == "Q0"]
+    assert [(op[2].name, op[2].duration) for op in q0_ops] == [
+        ("x180-Q0", 8),
+        ("blank", 20),
+        ("x180-Q0", 8),
+        ("blank", 20),
+    ]
+
+
 def test_qubex_executor_rejects_dynamic_circuit_control() -> None:
     class FakeExperiment:
         qubit_labels = ("Q0",)
@@ -2003,10 +2090,21 @@ def test_independent_cx_operations_are_scheduled_in_parallel(monkeypatch) -> Non
     assert len(calls) == 2
     assert calls[0][1].labels == ["Q0", "Q1", "Q0-Q1"]
     assert calls[1][1].labels == ["Q2", "Q3", "Q2-Q3"]
+    first_readout_index = min(
+        index
+        for index, op in enumerate(schedule.ops)
+        if op[0] == "add" and op[2].name.startswith("readout")
+    )
     assert not [
-        op for op in schedule.ops
+        op for op in schedule.ops[:first_readout_index]
         if op[0] == "add" and op[1] in {"Q2", "Q3"} and op[2].name == "blank"
     ]
+    # Readout windows occupy the drive channels so later gates cannot overlap.
+    readout_window_blanks = [
+        op for op in schedule.ops[first_readout_index:]
+        if op[0] == "add" and op[1] in {"Q2", "Q3"} and op[2].name == "blank"
+    ]
+    assert [blank[2].duration for blank in readout_window_blanks] == [20, 20]
 
 
 def test_dynamical_decoupling_pass_manager_inserts_dd_sequence(monkeypatch) -> None:

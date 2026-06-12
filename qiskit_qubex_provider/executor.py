@@ -157,9 +157,24 @@ class QubexPulseExecutor:
                             [readout_label],
                             start_ns,
                         )
+                    else:
+                        # Without Qiskit start times, channels only synchronize at
+                        # barriers, so the readout channel must be barriered to the
+                        # qubit channel or the readout would play from t=0.
+                        schedule.barrier([labels[0], readout_label])
+                        self._sync_offsets_after_barrier(
+                            schedule,
+                            channel_offsets,
+                            [labels[0], readout_label],
+                        )
                     waveform = pulse.readout(labels[0])
                     schedule.add(readout_label, waveform)
                     duration_ns = _duration_ns(waveform)
+                    if duration_ns > 0:
+                        # Occupy the drive channel for the readout window so later
+                        # gates on this qubit land after the readout, keeping the
+                        # actual channel offset equal to the tracked offset.
+                        schedule.add(labels[0], blank_cls(duration_ns))
                     self._advance_offsets(channel_offsets, [readout_label], duration_ns)
                     self._advance_offsets(channel_offsets, labels, duration_ns)
                 elif name in {"id", "reset"}:

@@ -72,6 +72,11 @@ class QubexBackend(BackendV2):
         """Return the source Qubex object used to build this backend."""
         return self._qubex
 
+    @property
+    def executor(self) -> Any | None:
+        """Return the configured Qubex executor, or None for simulator runs."""
+        return self._executor
+
     def run(self, run_input: Any, **options: Any):
         """Run circuits through the configured executor or local simulator.
 

@@ -30,16 +30,20 @@ class QubexSamplerV2(BaseSamplerV2):
 
     def run(self, pubs: Iterable[SamplerPubLike], *, shots: int | None = None):
         """Run sampler pubs and return a Qiskit primitive job."""
-        run_kwargs = dict(self._options)
         if shots is not None:
-            run_kwargs["shots"] = shots
-        return self._delegate.run(pubs, **run_kwargs)
+            return self._delegate.run(pubs, shots=shots)
+        return self._delegate.run(pubs)
 
     def _make_delegate(self):
         try:
             from qiskit.primitives import BackendSamplerV2
 
-            return BackendSamplerV2(backend=self._backend)
+            # Constructor options (default_shots, seed_simulator, run_options)
+            # belong to the delegate; run() only accepts shots.
+            return BackendSamplerV2(
+                backend=self._backend,
+                options=self._options or None,
+            )
         except ImportError:
             from qiskit.primitives import StatevectorSampler
 

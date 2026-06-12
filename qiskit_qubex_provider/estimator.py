@@ -13,9 +13,12 @@ from .backend import QubexBackend
 class QubexEstimatorV2(BaseEstimatorV2):
     """EstimatorV2 implementation for Qubex workflows.
 
-    The estimator delegates to Qiskit's statevector estimator. This provides a
-    standards-compliant primitive that works without live Qubex hardware while
-    sharing the same backend target used for transpilation.
+    When the backend has a Qubex executor configured, expectation values are
+    estimated from sampled backend executions through Qiskit's backend
+    estimator, so they reflect real hardware runs. Without an executor the
+    estimator delegates to Qiskit's exact statevector estimator, which works
+    without live Qubex hardware while sharing the same backend target used for
+    transpilation.
     """
 
     def __init__(self, backend: QubexBackend, **options: Any) -> None:
@@ -35,12 +38,24 @@ class QubexEstimatorV2(BaseEstimatorV2):
 
     def run(self, pubs: Iterable[EstimatorPubLike], *, precision: float | None = None):
         """Run estimator pubs and return a Qiskit primitive job."""
-        run_kwargs = dict(self._options)
         if precision is not None:
-            run_kwargs["precision"] = precision
-        return self._delegate.run(pubs, **run_kwargs)
+            return self._delegate.run(pubs, precision=precision)
+        return self._delegate.run(pubs)
 
     def _make_delegate(self):
+        if getattr(self._backend, "executor", None) is not None:
+            try:
+                from qiskit.primitives import BackendEstimatorV2
+
+                # Constructor options (default_precision, abelian_grouping,
+                # seed_simulator) belong to the delegate; run() only accepts
+                # precision.
+                return BackendEstimatorV2(
+                    backend=self._backend,
+                    options=self._options or None,
+                )
+            except ImportError:
+                pass
         from qiskit.primitives import StatevectorEstimator
 
         return StatevectorEstimator()
