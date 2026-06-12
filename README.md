@@ -14,14 +14,14 @@ uv pip install -e .
 Install directly from Git:
 
 ```bash
-pip install "qiskit-qubex-provider @ git+https://github.com/orangekame3/qiskit-qubex-provider.git@main"
+pip install "qiskit-qubex-provider @ git+https://github.com/orangekame3/qiskit-qubex-provider.git"
 ```
 
 `qubex` is intentionally optional because it is commonly installed from a
 local checkout. To install this provider and Qubex from Git in one command:
 
 ```bash
-pip install "qiskit-qubex-provider[qubex] @ git+https://github.com/orangekame3/qiskit-qubex-provider.git@main"
+pip install "qiskit-qubex-provider[qubex] @ git+https://github.com/orangekame3/qiskit-qubex-provider.git"
 ```
 
 For local Qubex development, install the checkout explicitly. Some Qubex
