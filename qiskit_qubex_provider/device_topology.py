@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import math
 import re
@@ -31,6 +32,7 @@ def label_to_qid(label: str) -> int:
 def build_device_topology(
     *,
     calib_note_path: str | Path,
+    request: Mapping[str, Any] | None = None,
     params_dir: str | Path | None = None,
     topology: Mapping[str, Any] | None = None,
     topology_json: str | Path | None = None,
@@ -40,6 +42,7 @@ def build_device_topology(
     exclude_couplings: Iterable[tuple[int, int]] | None = None,
     qubit_fidelity_metric: str = "x90_gate_fidelity",
     coupling_fidelity_metric: str = "zx90_gate_fidelity",
+    readout_fidelity_metric: str = "average_readout_fidelity",
     qubit_fidelity_range: tuple[float, float] = (0.0, 1.0),
     coupling_fidelity_range: tuple[float, float] = (0.0, 1.0),
     readout_fidelity_range: tuple[float, float] = (0.0, 1.0),
@@ -53,6 +56,40 @@ def build_device_topology(
     ``data:`` section maps Qubex labels such as ``Q00`` and ``Q00-Q01`` to
     numeric values.
     """
+    if request is not None:
+        request_options = _device_topology_request_options(request)
+        name = request_options.get("name", name)
+        device_id = request_options.get("device_id", device_id)
+        qubits = request_options.get("qubits", qubits)
+        exclude_couplings = request_options.get("exclude_couplings", exclude_couplings)
+        qubit_fidelity_metric = request_options.get(
+            "qubit_fidelity_metric",
+            qubit_fidelity_metric,
+        )
+        coupling_fidelity_metric = request_options.get(
+            "coupling_fidelity_metric",
+            coupling_fidelity_metric,
+        )
+        readout_fidelity_metric = request_options.get(
+            "readout_fidelity_metric",
+            readout_fidelity_metric,
+        )
+        qubit_fidelity_range = request_options.get(
+            "qubit_fidelity_range",
+            qubit_fidelity_range,
+        )
+        coupling_fidelity_range = request_options.get(
+            "coupling_fidelity_range",
+            coupling_fidelity_range,
+        )
+        readout_fidelity_range = request_options.get(
+            "readout_fidelity_range",
+            readout_fidelity_range,
+        )
+        only_maximum_connected = request_options.get(
+            "only_maximum_connected",
+            only_maximum_connected,
+        )
     calib_note = json.loads(Path(calib_note_path).read_text(encoding="utf-8"))
     metrics = _load_metrics(
         params_dir,
@@ -63,6 +100,7 @@ def build_device_topology(
             "t1_average",
             "t2_echo",
             "t2_echo_average",
+            readout_fidelity_metric,
             "readout_fidelity_0",
             "readout_fidelity_1",
             "average_readout_fidelity",
@@ -86,6 +124,7 @@ def build_device_topology(
             metrics,
             qubit_fidelity_metric=qubit_fidelity_metric,
             qubit_fidelity_range=qubit_fidelity_range,
+            readout_fidelity_metric=readout_fidelity_metric,
             readout_fidelity_range=readout_fidelity_range,
         )
     ]
@@ -143,15 +182,255 @@ def build_device_topology(
 
 def write_device_topology(
     output_json: str | Path,
+    output_image: str | Path | bool | None = None,
     **build_options: Any,
 ) -> dict[str, Any]:
     """Build and write Device Gateway topology metadata."""
     topology = build_device_topology(**build_options)
-    Path(output_json).write_text(
+    output_json_path = Path(output_json)
+    output_json_path.write_text(
         json.dumps(topology, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    if output_image is not False:
+        image_path = (
+            output_json_path.with_suffix(".svg")
+            if output_image is None or output_image is True
+            else Path(output_image)
+        )
+        write_device_topology_image(topology, image_path)
     return topology
+
+
+def write_device_topology_image(
+    topology: Mapping[str, Any],
+    output_image: str | Path,
+) -> None:
+    """Write a topology visualization for Device Gateway topology metadata.
+
+    Plotly is used when available. Static image formats such as PNG and SVG
+    require Plotly's Kaleido backend. If Plotly is not installed and the output
+    path ends in ``.svg``, a dependency-free SVG fallback is written.
+    """
+    output_path = Path(output_image)
+    suffix = output_path.suffix.lower()
+    try:
+        figure = build_device_topology_figure(topology)
+        if suffix == ".html":
+            figure.write_html(str(output_path), include_plotlyjs="cdn")
+        else:
+            figure.write_image(str(output_path), scale=2)
+    except (ImportError, ValueError) as exc:
+        if suffix == ".html":
+            raise RuntimeError(
+                "Writing topology plots to HTML requires Plotly. Install the "
+                "'plot' extra: pip install 'qiskit-qubex-provider[plot]'."
+            ) from exc
+        if suffix != ".svg":
+            raise RuntimeError(
+                "Writing topology plots to static image formats requires Plotly "
+                "and a working Kaleido backend. Install the 'plot' extra and use "
+                "--output-image device-topology.html if Kaleido is unavailable."
+            ) from exc
+        output_path.write_text(build_device_topology_svg(topology), encoding="utf-8")
+
+
+def build_device_topology_figure(topology: Mapping[str, Any]):
+    """Return a Plotly figure for Device Gateway topology metadata."""
+    try:
+        import plotly.graph_objects as go
+    except ImportError as exc:
+        raise ImportError(
+            "Topology plotting requires the optional 'plot' extra: "
+            "pip install 'qiskit-qubex-provider[plot]'."
+        ) from exc
+
+    qubits = [
+        qubit
+        for qubit in topology.get("qubits", [])
+        if isinstance(qubit, Mapping) and "id" in qubit
+    ]
+    couplings = [
+        coupling
+        for coupling in topology.get("couplings", [])
+        if isinstance(coupling, Mapping)
+        and "control" in coupling
+        and "target" in coupling
+    ]
+    positions = _plot_positions(qubits)
+    figure = go.Figure()
+
+    for coupling in couplings:
+        control = int(coupling["control"])
+        target = int(coupling["target"])
+        if control not in positions or target not in positions:
+            continue
+        x1, y1 = positions[control]
+        x2, y2 = positions[target]
+        fidelity = _safe_float(coupling.get("fidelity"), default=0.0)
+        duration = _safe_float(
+            _mapping(coupling.get("gate_duration")).get("rzx90"),
+            default=0.0,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=[x1, x2],
+                y=[y1, y2],
+                mode="lines",
+                line={"width": 2 + 5 * max(0.0, min(1.0, fidelity)), "color": "#64748b"},
+                hovertemplate=(
+                    f"direction: q{control} -> q{target}<br>"
+                    f"coupling fidelity: {fidelity:.4f}<br>"
+                    f"rzx90 duration: {duration:.0f} ns<extra></extra>"
+                ),
+                showlegend=False,
+            )
+        )
+        _add_direction_annotation(figure, x1, y1, x2, y2, fidelity)
+
+    if qubits:
+        physical_ids = [int(qubit.get("physical_id", qubit["id"])) for qubit in qubits]
+        label_base = _label_width_base(qubits)
+        x_values = [positions[int(qubit["id"])][0] for qubit in qubits]
+        y_values = [positions[int(qubit["id"])][1] for qubit in qubits]
+        fidelities = [_safe_float(qubit.get("fidelity"), default=0.0) for qubit in qubits]
+        labels = [qid_to_label(physical_id, label_base) for physical_id in physical_ids]
+        hover_text = [
+            _qubit_hover_text(qubit, label, fidelity)
+            for qubit, label, fidelity in zip(qubits, labels, fidelities, strict=True)
+        ]
+        figure.add_trace(
+            go.Scatter(
+                x=x_values,
+                y=y_values,
+                mode="markers+text",
+                text=labels,
+                textposition="middle center",
+                textfont={"color": "white", "size": 12},
+                marker={
+                    "size": 42,
+                    "color": fidelities,
+                    "colorscale": "Viridis",
+                    "cmin": min(fidelities),
+                    "cmax": max(fidelities),
+                    "line": {"color": "white", "width": 2},
+                    "colorbar": {"title": "Qubit fidelity"},
+                },
+                customdata=hover_text,
+                hovertemplate="%{customdata}<extra></extra>",
+                name="qubits",
+            )
+        )
+
+    name = str(topology.get("name") or topology.get("device_id") or "Qubex")
+    figure.update_layout(
+        title={
+            "text": (
+                f"{name} topology: {len(qubits)} qubits / "
+                f"{len(couplings)} directed couplings"
+            ),
+            "x": 0.02,
+            "xanchor": "left",
+        },
+        width=1200,
+        height=900,
+        plot_bgcolor="#f8fafc",
+        paper_bgcolor="#f8fafc",
+        margin={"l": 40, "r": 40, "t": 90, "b": 40},
+        xaxis={"visible": False, "scaleanchor": "y", "scaleratio": 1},
+        yaxis={"visible": False},
+        showlegend=False,
+    )
+    return figure
+
+
+def build_device_topology_svg(topology: Mapping[str, Any]) -> str:
+    """Return an SVG visualization for Device Gateway topology metadata."""
+    qubits = [
+        qubit
+        for qubit in topology.get("qubits", [])
+        if isinstance(qubit, Mapping) and "id" in qubit
+    ]
+    couplings = [
+        coupling
+        for coupling in topology.get("couplings", [])
+        if isinstance(coupling, Mapping)
+        and "control" in coupling
+        and "target" in coupling
+    ]
+    width = 960
+    height = 720
+    margin = 88
+    positions = _svg_positions(qubits, width=width, height=height, margin=margin)
+    name = html.escape(str(topology.get("name") or topology.get("device_id") or "Qubex"))
+    calibrated_at = html.escape(str(topology.get("calibrated_at") or ""))
+
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+            f'height="{height}" viewBox="0 0 {width} {height}" role="img" '
+            f'aria-label="{name} device topology">'
+        ),
+        "<defs>",
+        (
+            '<marker id="arrow" markerWidth="10" markerHeight="10" refX="9" '
+            'refY="3" orient="auto" markerUnits="strokeWidth">'
+            '<path d="M0,0 L0,6 L9,3 z" fill="#64748b" /></marker>'
+        ),
+        (
+            '<filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">'
+            '<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" '
+            'flood-opacity="0.18" /></filter>'
+        ),
+        "</defs>",
+        '<rect width="100%" height="100%" fill="#f8fafc" />',
+        f'<text x="48" y="52" fill="#0f172a" font-family="Inter, Arial, sans-serif" '
+        f'font-size="28" font-weight="700">{name}</text>',
+        f'<text x="48" y="80" fill="#64748b" font-family="Inter, Arial, sans-serif" '
+        f'font-size="14">{len(qubits)} qubits / {len(couplings)} directed couplings'
+        f'{(" / calibrated " + calibrated_at) if calibrated_at else ""}</text>',
+    ]
+    for coupling in couplings:
+        control = int(coupling["control"])
+        target = int(coupling["target"])
+        if control not in positions or target not in positions:
+            continue
+        x1, y1 = positions[control]
+        x2, y2 = positions[target]
+        fidelity = _safe_float(coupling.get("fidelity"), default=0.0)
+        color = _fidelity_color(fidelity)
+        line_start, line_end = _shortened_line(x1, y1, x2, y2, radius=28)
+        parts.append(
+            f'<line x1="{line_start[0]:.2f}" y1="{line_start[1]:.2f}" '
+            f'x2="{line_end[0]:.2f}" y2="{line_end[1]:.2f}" '
+            f'stroke="{color}" stroke-width="5" stroke-linecap="round" '
+            f'marker-end="url(#arrow)" opacity="0.82">'
+            f'<title>q{control} -> q{target}, fidelity {fidelity:.4f}</title></line>'
+        )
+    for qubit in qubits:
+        qubit_id = int(qubit["id"])
+        x, y = positions[qubit_id]
+        physical_id = int(qubit.get("physical_id", qubit_id))
+        fidelity = _safe_float(qubit.get("fidelity"), default=0.0)
+        color = _fidelity_color(fidelity)
+        label = html.escape(qid_to_label(physical_id, _label_width_base(qubits)))
+        parts.extend(
+            [
+                f'<circle cx="{x:.2f}" cy="{y:.2f}" r="30" fill="{color}" '
+                f'stroke="#ffffff" stroke-width="4" filter="url(#shadow)">'
+                f'<title>{label}, logical q{qubit_id}, fidelity {fidelity:.4f}</title>'
+                "</circle>",
+                f'<text x="{x:.2f}" y="{y + 5:.2f}" text-anchor="middle" '
+                f'fill="#ffffff" font-family="Inter, Arial, sans-serif" '
+                f'font-size="15" font-weight="700">{label}</text>',
+                f'<text x="{x:.2f}" y="{y + 48:.2f}" text-anchor="middle" '
+                f'fill="#334155" font-family="Inter, Arial, sans-serif" '
+                f'font-size="12">q{qubit_id} / {fidelity:.3f}</text>',
+            ]
+        )
+    parts.append("</svg>")
+    return "\n".join(parts) + "\n"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -159,9 +438,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Generate device-topology.json from Qubex calibration files.",
     )
     parser.add_argument("--calib-note", required=True, help="Path to calib_note.json.")
+    parser.add_argument(
+        "--request-json",
+        help="Optional QDash-style DeviceTopologyRequest JSON file.",
+    )
     parser.add_argument("--params-dir", help="Path to the Qubex params directory.")
     parser.add_argument("--topology-json", help="Optional physical topology JSON.")
     parser.add_argument("--output-json", default="device-topology.json")
+    parser.add_argument(
+        "--output-image",
+        help="Path to write an SVG topology image. Defaults to output-json with .svg.",
+    )
+    parser.add_argument(
+        "--no-output-image",
+        action="store_true",
+        help="Do not write the topology SVG image.",
+    )
     parser.add_argument("--name", default="anemone")
     parser.add_argument("--device-id", default="anemone")
     parser.add_argument("--qubits", help="Comma-separated physical qubit ids.")
@@ -171,6 +463,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--qubit-fidelity-metric", default="x90_gate_fidelity")
     parser.add_argument("--coupling-fidelity-metric", default="zx90_gate_fidelity")
+    parser.add_argument("--readout-fidelity-metric", default="average_readout_fidelity")
     parser.add_argument("--qubit-fidelity-range", default="0:1")
     parser.add_argument("--coupling-fidelity-range", default="0:1")
     parser.add_argument("--readout-fidelity-range", default="0:1")
@@ -183,7 +476,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     write_device_topology(
         args.output_json,
+        output_image=False if args.no_output_image else args.output_image,
         calib_note_path=args.calib_note,
+        request=_load_request_json(args.request_json),
         params_dir=args.params_dir,
         topology_json=args.topology_json,
         name=args.name,
@@ -192,6 +487,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         exclude_couplings=_parse_coupling_list(args.exclude_couplings),
         qubit_fidelity_metric=args.qubit_fidelity_metric,
         coupling_fidelity_metric=args.coupling_fidelity_metric,
+        readout_fidelity_metric=args.readout_fidelity_metric,
         qubit_fidelity_range=_parse_range(args.qubit_fidelity_range),
         coupling_fidelity_range=_parse_range(args.coupling_fidelity_range),
         readout_fidelity_range=_parse_range(args.readout_fidelity_range),
@@ -384,12 +680,13 @@ def _qubit_passes_filters(
     *,
     qubit_fidelity_metric: str,
     qubit_fidelity_range: tuple[float, float],
+    readout_fidelity_metric: str,
     readout_fidelity_range: tuple[float, float],
 ) -> bool:
     fidelity = _metric_value(metrics, qubit_fidelity_metric, qid, num_qubits, default=0.25)
     readout = _metric_value(
         metrics,
-        "average_readout_fidelity",
+        readout_fidelity_metric,
         qid,
         num_qubits,
         default=1.0,
@@ -429,9 +726,9 @@ def _infer_couplings(
             control,
             target,
             num_qubits,
-            default=0.25,
+            default=None,
         )
-        if _in_range(fidelity, coupling_fidelity_range):
+        if fidelity is not None and _in_range(float(fidelity), coupling_fidelity_range):
             result.append((control, target))
     return sorted(dict.fromkeys(result))
 
@@ -485,17 +782,23 @@ def _build_coupling_entry(
     metrics: Mapping[str, Mapping[str, Any]],
     coupling_fidelity_metric: str,
 ) -> dict[str, Any]:
+    fidelity = _coupling_metric_value(
+        metrics,
+        coupling_fidelity_metric,
+        control,
+        target,
+        num_qubits,
+        default=None,
+    )
+    if fidelity is None:
+        raise ValueError(
+            f"Missing {coupling_fidelity_metric!r} for coupling "
+            f"{qid_to_label(control, num_qubits)}-{qid_to_label(target, num_qubits)}."
+        )
     return {
         "control": id_by_qid[control],
         "target": id_by_qid[target],
-        "fidelity": _coupling_metric_value(
-            metrics,
-            coupling_fidelity_metric,
-            control,
-            target,
-            num_qubits,
-            default=0.25,
-        ),
+        "fidelity": float(fidelity),
         "gate_duration": {
             "rzx90": _coupling_duration(calib_note, control, target, num_qubits),
         },
@@ -619,6 +922,234 @@ def _calibrated_at(calib_note: Mapping[str, Any]) -> str:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _load_request_json(path: str | None) -> Mapping[str, Any] | None:
+    if path is None:
+        return None
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _device_topology_request_options(request: Mapping[str, Any]) -> dict[str, Any]:
+    condition = _mapping(request.get("condition"))
+    options: dict[str, Any] = {}
+    if "name" in request:
+        options["name"] = str(request["name"])
+    if "device_id" in request:
+        options["device_id"] = str(request["device_id"])
+    if "qubits" in request and request["qubits"] is not None:
+        options["qubits"] = [_parse_request_qid(qid) for qid in request["qubits"]]
+    if "exclude_couplings" in request and request["exclude_couplings"] is not None:
+        options["exclude_couplings"] = _parse_request_couplings(
+            request["exclude_couplings"],
+        )
+    qubit_fidelity = _mapping(condition.get("qubit_fidelity"))
+    if qubit_fidelity:
+        options["qubit_fidelity_range"] = _request_range(qubit_fidelity)
+        metric = qubit_fidelity.get("metric")
+        if metric:
+            options["qubit_fidelity_metric"] = str(metric)
+    coupling_fidelity = _mapping(condition.get("coupling_fidelity"))
+    if coupling_fidelity:
+        options["coupling_fidelity_range"] = _request_range(coupling_fidelity)
+        metric = coupling_fidelity.get("metric")
+        if metric:
+            options["coupling_fidelity_metric"] = str(metric)
+    readout_fidelity = _mapping(condition.get("readout_fidelity"))
+    if readout_fidelity:
+        options["readout_fidelity_range"] = _request_range(readout_fidelity)
+        metric = readout_fidelity.get("metric")
+        if metric:
+            options["readout_fidelity_metric"] = str(metric)
+    if "only_maximum_connected" in condition:
+        options["only_maximum_connected"] = bool(condition["only_maximum_connected"])
+    return options
+
+
+def _request_range(condition: Mapping[str, Any]) -> tuple[float, float]:
+    return (
+        _safe_float(condition.get("min"), default=0.0),
+        _safe_float(condition.get("max"), default=1.0),
+    )
+
+
+def _parse_request_qid(value: Any) -> int:
+    if isinstance(value, str):
+        qid = _maybe_label_to_qid(value)
+        if qid is not None:
+            return qid
+    return int(value)
+
+
+def _parse_request_couplings(values: Iterable[Any]) -> list[tuple[int, int]]:
+    couplings: list[tuple[int, int]] = []
+    for value in values:
+        if isinstance(value, str):
+            left, right = value.strip().split("-", 1)
+            couplings.append((_parse_request_qid(left), _parse_request_qid(right)))
+        elif isinstance(value, Sequence) and len(value) == 2:
+            couplings.append((_parse_request_qid(value[0]), _parse_request_qid(value[1])))
+        else:
+            raise ValueError(f"Invalid coupling request entry {value!r}.")
+    return couplings
+
+
+def _plot_positions(qubits: Sequence[Mapping[str, Any]]) -> dict[int, tuple[float, float]]:
+    raw = {
+        int(qubit["id"]): (
+            _safe_float(_mapping(qubit.get("position")).get("x"), default=0.0),
+            _safe_float(_mapping(qubit.get("position")).get("y"), default=0.0),
+        )
+        for qubit in qubits
+    }
+    if not raw:
+        return {}
+    xs = [value[0] for value in raw.values()]
+    ys = [value[1] for value in raw.values()]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = max_x - min_x
+    span_y = max_y - min_y
+    scale = max(span_x, span_y, 1.0)
+    return {
+        qubit_id: (
+            100 * (0.5 if span_x == 0 else (x - min_x) / scale),
+            -100 * (0.5 if span_y == 0 else (y - min_y) / scale),
+        )
+        for qubit_id, (x, y) in raw.items()
+    }
+
+
+def _add_direction_annotation(
+    figure: Any,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    fidelity: float,
+) -> None:
+    start, end = _shortened_line(x1, y1, x2, y2, radius=2.8)
+    figure.add_annotation(
+        x=end[0],
+        y=end[1],
+        ax=start[0],
+        ay=start[1],
+        xref="x",
+        yref="y",
+        axref="x",
+        ayref="y",
+        showarrow=True,
+        arrowhead=3,
+        arrowsize=1.2,
+        arrowwidth=2 + 4 * max(0.0, min(1.0, fidelity)),
+        arrowcolor=_fidelity_color(fidelity),
+        opacity=0.9,
+    )
+
+
+def _qubit_hover_text(
+    qubit: Mapping[str, Any],
+    label: str,
+    fidelity: float,
+) -> str:
+    lifetime = _mapping(qubit.get("qubit_lifetime"))
+    meas_error = _mapping(qubit.get("meas_error"))
+    gate_duration = _mapping(qubit.get("gate_duration"))
+    return (
+        f"{html.escape(label)}<br>"
+        f"logical q{int(qubit['id'])}<br>"
+        f"qubit fidelity: {fidelity:.4f}<br>"
+        f"readout fidelity: "
+        f"{1.0 - _safe_float(meas_error.get('readout_assignment_error'), default=1.0):.4f}"
+        f"<br>t1: {_safe_float(lifetime.get('t1'), default=0.0):.2f} us"
+        f"<br>t2: {_safe_float(lifetime.get('t2'), default=0.0):.2f} us"
+        f"<br>sx: {_safe_float(gate_duration.get('sx'), default=0.0):.0f} ns"
+        f"<br>x: {_safe_float(gate_duration.get('x'), default=0.0):.0f} ns"
+    )
+
+
+def _svg_positions(
+    qubits: Sequence[Mapping[str, Any]],
+    *,
+    width: int,
+    height: int,
+    margin: int,
+) -> dict[int, tuple[float, float]]:
+    if not qubits:
+        return {}
+    raw_positions: dict[int, tuple[float, float]] = {}
+    for index, qubit in enumerate(qubits):
+        qubit_id = int(qubit["id"])
+        position = qubit.get("position")
+        if isinstance(position, Mapping):
+            raw_positions[qubit_id] = (
+                _safe_float(position.get("x"), default=0.0),
+                _safe_float(position.get("y"), default=0.0),
+            )
+        else:
+            angle = 2 * math.pi * index / len(qubits)
+            raw_positions[qubit_id] = (0.5 + 0.45 * math.cos(angle), 0.5 + 0.45 * math.sin(angle))
+    xs = [position[0] for position in raw_positions.values()]
+    ys = [position[1] for position in raw_positions.values()]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = max_x - min_x
+    span_y = max_y - min_y
+    drawable_width = width - 2 * margin
+    drawable_height = height - 2 * margin - 48
+    y_offset = margin + 48
+    return {
+        qubit_id: (
+            margin + (0.5 if span_x == 0 else (x - min_x) / span_x) * drawable_width,
+            y_offset + (0.5 if span_y == 0 else (y - min_y) / span_y) * drawable_height,
+        )
+        for qubit_id, (x, y) in raw_positions.items()
+    }
+
+
+def _shortened_line(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    *,
+    radius: float,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    dx = x2 - x1
+    dy = y2 - y1
+    distance = math.hypot(dx, dy)
+    if distance == 0:
+        return (x1, y1), (x2, y2)
+    ux = dx / distance
+    uy = dy / distance
+    return (x1 + ux * radius, y1 + uy * radius), (x2 - ux * radius, y2 - uy * radius)
+
+
+def _safe_float(value: Any, *, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _fidelity_color(fidelity: float) -> str:
+    if fidelity >= 0.98:
+        return "#16a34a"
+    if fidelity >= 0.95:
+        return "#65a30d"
+    if fidelity >= 0.90:
+        return "#d97706"
+    return "#dc2626"
+
+
+def _label_width_base(qubits: Sequence[Mapping[str, Any]]) -> int:
+    physical_ids = [
+        int(qubit.get("physical_id", qubit.get("id", 0)))
+        for qubit in qubits
+        if isinstance(qubit, Mapping)
+    ]
+    return (max(physical_ids) + 1) if physical_ids else len(qubits)
 
 
 def _maybe_label_to_qid(label: str) -> int | None:

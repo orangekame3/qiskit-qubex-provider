@@ -1,0 +1,117 @@
+{
+  "name": "example-small",
+  "device_id": "example-small",
+  "qubits": [
+    {
+      "id": 0,
+      "physical_id": 0,
+      "position": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "fidelity": 0.992,
+      "meas_error": {
+        "prob_meas1_prep0": 0.025,
+        "prob_meas0_prep1": 0.018,
+        "readout_assignment_error": 0.0215
+      },
+      "qubit_lifetime": {
+        "t1": 32.0,
+        "t2": 28.5
+      },
+      "gate_duration": {
+        "rz": 0,
+        "sx": 16,
+        "x": 24
+      }
+    },
+    {
+      "id": 1,
+      "physical_id": 1,
+      "position": {
+        "x": 1.0,
+        "y": 0.0
+      },
+      "fidelity": 0.986,
+      "meas_error": {
+        "prob_meas1_prep0": 0.031,
+        "prob_meas0_prep1": 0.022,
+        "readout_assignment_error": 0.0265
+      },
+      "qubit_lifetime": {
+        "t1": 29.4,
+        "t2": 24.1
+      },
+      "gate_duration": {
+        "rz": 0,
+        "sx": 18,
+        "x": 26
+      }
+    },
+    {
+      "id": 2,
+      "physical_id": 2,
+      "position": {
+        "x": 0.0,
+        "y": 1.0
+      },
+      "fidelity": 0.973,
+      "meas_error": {
+        "prob_meas1_prep0": 0.042,
+        "prob_meas0_prep1": 0.033,
+        "readout_assignment_error": 0.0375
+      },
+      "qubit_lifetime": {
+        "t1": 25.7,
+        "t2": 21.9
+      },
+      "gate_duration": {
+        "rz": 0,
+        "sx": 20,
+        "x": 28
+      }
+    },
+    {
+      "id": 3,
+      "physical_id": 3,
+      "position": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "fidelity": 0.941,
+      "meas_error": {
+        "prob_meas1_prep0": 0.061,
+        "prob_meas0_prep1": 0.052,
+        "readout_assignment_error": 0.0565
+      },
+      "qubit_lifetime": {
+        "t1": 18.8,
+        "t2": 16.3
+      },
+      "gate_duration": {
+        "rz": 0,
+        "sx": 20,
+        "x": 30
+      }
+    }
+  ],
+  "couplings": [
+    {
+      "control": 0,
+      "target": 1,
+      "fidelity": 0.965,
+      "gate_duration": {
+        "rzx90": 272
+      }
+    },
+    {
+      "control": 2,
+      "target": 3,
+      "fidelity": 0.918,
+      "gate_duration": {
+        "rzx90": 288
+      }
+    }
+  ],
+  "calibrated_at": "2026-01-02T03:04:05Z"
+}
