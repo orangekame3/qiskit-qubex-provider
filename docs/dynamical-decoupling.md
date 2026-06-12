@@ -24,6 +24,31 @@ of Qiskit gates can also be passed. Additional knobs (`qubits`, `spacing`,
 `skip_reset_qubits`, `pulse_alignment`, `extra_slack_distribution`) are
 forwarded to Qiskit's `PadDynamicalDecoupling`.
 
+## Fixed pulse interval (experiment-style DD)
+
+Qiskit's `PadDynamicalDecoupling` inserts **one** sequence block per idle
+window and stretches it, so the pulse interval grows with the window
+length. DD experiments instead keep the pulse interval fixed and repeat
+the sequence (Pokharel et al., PRL 121, 220502 (2018)). Pass
+`pulse_interval` (seconds) to get that behavior — each idle window is
+padded with as many sequence repetitions as fit one pulse per interval:
+
+```python
+dd_passes = build_dynamical_decoupling_pass_manager(
+    backend,
+    sequence="xy4",
+    pulse_interval=250e-9,  # one π pulse every ≈250 ns in every idle window
+    scheduling_method="asap",
+)
+```
+
+Repetition counts are chosen per window, so circuits whose idle windows
+have different lengths all see the same pulse density. Windows too short
+for one repetition fall back to a plain delay; odd-length bases (`"x"`)
+are repeated an even number of times to preserve the identity
+composition. `pulse_interval` is mutually exclusive with `spacing` and
+the context-aware pass.
+
 ## Topology-aware DD
 
 For coupling-context-aware X-sequence DD, prefer the explicit helper:
