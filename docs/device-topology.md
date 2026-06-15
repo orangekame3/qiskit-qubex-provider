@@ -4,9 +4,9 @@ How to build Qiskit `Target` metadata from a Device Gateway
 `device-topology.json` file or from Qubex calibration files.
 
 A small generated example is available at
-[examples/device-topology.json](../examples/device-topology.json), with a
+[examples/simulation/device-topology.json](../examples/simulation/device-topology.json), with a
 matching topology image at
-[examples/device-topology.svg](../examples/device-topology.svg).
+[examples/simulation/device-topology.svg](../examples/simulation/device-topology.svg).
 
 ## Using an existing topology file
 

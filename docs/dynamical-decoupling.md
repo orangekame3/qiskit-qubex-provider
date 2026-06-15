@@ -75,8 +75,8 @@ The resulting scheduled circuit can be validated and executed like any other
 (see [hardware-execution.md](hardware-execution.md)); inserted DD pulses and
 delays become calibrated Qubex pulses and `Blank` padding. A runnable
 example with pulse-level before/after timelines lives at
-[examples/dynamical-decoupling.ipynb](../examples/dynamical-decoupling.ipynb),
+[examples/simulation/dynamical-decoupling.ipynb](../examples/simulation/dynamical-decoupling.ipynb),
 and a hardware-ready demonstration study (sequence comparison over an
 idle-time sweep, Bell-pair preservation, and spectator DD, after Pokharel
 et al., PRL 121, 220502 (2018)) at
-[examples/dd-demonstration.ipynb](../examples/dd-demonstration.ipynb).
+[examples/simulation/dd-demonstration.ipynb](../examples/simulation/dd-demonstration.ipynb).

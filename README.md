@@ -103,15 +103,16 @@ estimator = provider.get_estimator()  # hardware-sampled with an executor, exact
 | Topic | Where |
 | --- | --- |
 | Hardware execution: setup, run options, supported gates, validation | [docs/hardware-execution.md](docs/hardware-execution.md) |
+| Hardware examples: 144Qv2 script and scheduling notebook | [examples/hardware/](examples/hardware/) |
 | Device topology files and target generation (incl. CLI) | [docs/device-topology.md](docs/device-topology.md) |
 | Dynamical decoupling pass managers | [docs/dynamical-decoupling.md](docs/dynamical-decoupling.md) |
 | Comparing pulse schedules across scheduling methods | [docs/pulse-schedule-visualization.md](docs/pulse-schedule-visualization.md) |
 | Internals: frame tracking, timing model, sampling grid | [docs/hardware-execution-notes.md](docs/hardware-execution-notes.md) |
-| Notebook: end-to-end tour (topology → transpile → pulses → visualization) | [examples/tutorial.ipynb](examples/tutorial.ipynb) |
-| Notebook: mid-circuit measurement | [examples/mid-circuit-measurement.ipynb](examples/mid-circuit-measurement.ipynb) |
-| Notebook: dynamical decoupling | [examples/dynamical-decoupling.ipynb](examples/dynamical-decoupling.ipynb) |
-| Notebook: DD fidelity demonstration (Pokharel et al. protocol) | [examples/dd-demonstration.ipynb](examples/dd-demonstration.ipynb) |
-| Notebook: Heisenberg dynamics, new vs deprecated scheduling | [examples/heisenberg.ipynb](examples/heisenberg.ipynb) |
+| Notebook: end-to-end tour (topology → transpile → pulses → visualization) | [examples/simulation/tutorial.ipynb](examples/simulation/tutorial.ipynb) |
+| Notebook: mid-circuit measurement | [examples/simulation/mid-circuit-measurement.ipynb](examples/simulation/mid-circuit-measurement.ipynb) |
+| Notebook: dynamical decoupling | [examples/simulation/dynamical-decoupling.ipynb](examples/simulation/dynamical-decoupling.ipynb) |
+| Notebook: DD fidelity demonstration (Pokharel et al. protocol) | [examples/simulation/dd-demonstration.ipynb](examples/simulation/dd-demonstration.ipynb) |
+| Notebook: Heisenberg dynamics, new vs deprecated scheduling | [examples/simulation/heisenberg.ipynb](examples/simulation/heisenberg.ipynb) |
 
 ## Development
 

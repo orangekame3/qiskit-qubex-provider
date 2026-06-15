@@ -17,7 +17,7 @@ The result is a plain Qubex `PulseSchedule`, so everything below — and
 Qubex's own plotting — applies to it directly.
 
 A runnable tutorial notebook is available at
-[examples/tutorial.ipynb](../examples/tutorial.ipynb).
+[examples/simulation/tutorial.ipynb](../examples/simulation/tutorial.ipynb).
 
 ## Gantt-style timeline (Qiskit `timeline_drawer`-like)
 

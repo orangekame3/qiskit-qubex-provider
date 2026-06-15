@@ -97,6 +97,16 @@ class QubexProvider:
         """Build and preflight Qubex pulse schedules without executing them."""
         return (backend or self._backend).validate(run_input)
 
+    def build_classifier(
+        self,
+        targets: Sequence[str] | str | None = None,
+        *,
+        backend: QubexBackend | None = None,
+        **options: Any,
+    ) -> Any:
+        """Build Qubex state classifiers used to convert raw IQ data to counts."""
+        return (backend or self._backend).build_classifier(targets=targets, **options)
+
     @classmethod
     def from_device_topology(
         cls,

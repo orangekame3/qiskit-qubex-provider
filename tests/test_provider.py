@@ -643,9 +643,9 @@ def test_build_device_topology_svg_renders_topology() -> None:
 
 def test_device_topology_examples_are_loadable() -> None:
     topology = json.loads(
-        (REPO_ROOT / "examples" / "device-topology.json").read_text(encoding="utf-8")
+        (REPO_ROOT / "examples" / "simulation" / "device-topology.json").read_text(encoding="utf-8")
     )
-    svg = (REPO_ROOT / "examples" / "device-topology.svg").read_text(encoding="utf-8")
+    svg = (REPO_ROOT / "examples" / "simulation" / "device-topology.svg").read_text(encoding="utf-8")
 
     assert topology["name"] == "4Q-DEMO"
     assert len(topology["qubits"]) == 4
@@ -869,7 +869,9 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
     assert result.get_counts() == {"01": 3, "10": 2}
     execute_call = qubex.measurement_service.calls[0]
     assert execute_call["n_shots"] == 5
-    assert execute_call["state_classification"] is True
+    assert execute_call["mode"] == "single"
+    assert execute_call["state_classification"] is False
+    assert execute_call["time_integration"] is True
     assert execute_call["final_measurement"] is False
     assert execute_call["acquisition_timeout"] == 30.0
     assert "seed_simulator" not in execute_call
@@ -946,7 +948,7 @@ def test_qubex_executor_rejects_disabled_implicit_final_measurement(monkeypatch)
     assert experiment.measurement_service.calls == []
 
 
-def test_qubex_executor_rejects_disabled_state_classification(monkeypatch) -> None:
+def test_qubex_executor_allows_software_classification_path(monkeypatch) -> None:
     class FakeMeasurementService:
         def __init__(self):
             self.calls = []
@@ -973,9 +975,125 @@ def test_qubex_executor_rejects_disabled_state_classification(monkeypatch) -> No
     circuit = QuantumCircuit(1, 1)
     circuit.measure(0, 0)
 
-    with pytest.raises(ValueError, match="state_classification=True"):
-        backend.run(circuit, shots=1, state_classification=False).result()
-    assert experiment.measurement_service.calls == []
+    result = backend.run(circuit, shots=1, state_classification=False).result()
+
+    assert result.get_counts() == {"1": 1}
+    execute_call = experiment.measurement_service.calls[0]
+    assert execute_call["state_classification"] is False
+    assert execute_call["time_integration"] is True
+
+
+def test_provider_build_classifier_delegates_to_executor() -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.calls = []
+
+        def build_classifier(self, **kwargs):
+            self.calls.append(kwargs)
+            return "classifier-result"
+
+    experiment = FakeExperiment()
+    provider = QubexProvider.from_experiment(experiment)
+
+    result = provider.build_classifier(targets=["Q0"], shots=12)
+
+    assert result == "classifier-result"
+    assert experiment.calls == [
+        {"targets": ["Q0"], "n_shots": 12, "plot": False}
+    ]
+
+
+def test_backend_build_classifier_delegates_to_executor() -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.calls = []
+
+        def build_classifier(self, **kwargs):
+            self.calls.append(kwargs)
+            return "classifier-result"
+
+    experiment = FakeExperiment()
+    backend = QubexProvider.from_experiment(experiment).get_backend()
+
+    result = backend.build_classifier(shots="7")
+
+    assert result == "classifier-result"
+    assert experiment.calls == [
+        {"targets": ["Q0"], "n_shots": 7, "plot": False}
+    ]
+
+
+def test_qubex_executor_applies_readout_mitigation(monkeypatch) -> None:
+    class FakeMeasurementService:
+        def __init__(self):
+            self.execute_kwargs = None
+
+        def execute(self, **kwargs):
+            self.execute_kwargs = kwargs
+            return {"counts": {"0": 70, "1": 30}}
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+        def get_inverse_confusion_matrix(self, targets):
+            assert targets == ["Q0"]
+            return [[1.25, -0.25], [-0.25, 1.25]]
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    experiment = FakeExperiment()
+    backend = QubexProvider.from_experiment(experiment).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    result = backend.run(circuit, shots=100, readout_mitigation=True).result()
+
+    assert result.get_counts() == {"0": 80, "1": 20}
+    assert "readout_mitigation" not in experiment.measurement_service.execute_kwargs
+
+
+def test_qubex_executor_reports_missing_classifier_with_provider_guidance(monkeypatch) -> None:
+    class FakeMeasureResult:
+        def get_counts(self, targets):
+            raise ValueError("Classifier is not set")
+
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return FakeMeasureResult()
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    monkeypatch.setattr(
+        executor_module,
+        "_import_pulse_schedule",
+        lambda: DurationSchedule,
+    )
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    backend = QubexProvider.from_experiment(FakeExperiment()).get_backend()
+    circuit = QuantumCircuit(1, 1)
+    circuit.measure(0, 0)
+
+    with pytest.raises(ValueError, match="provider.build_classifier"):
+        backend.run(circuit, shots=1).result()
 
 
 @pytest.mark.parametrize(
@@ -1043,8 +1161,8 @@ def test_qubex_executor_validates_options_before_schedule_build(monkeypatch) -> 
     circuit = QuantumCircuit(1, 1)
     circuit.measure(0, 0)
 
-    with pytest.raises(ValueError, match="state_classification=True"):
-        backend.run(circuit, shots=1, state_classification=False).result()
+    with pytest.raises(ValueError, match="state_classification"):
+        backend.run(circuit, shots=1, state_classification="False").result()
 
 
 @pytest.mark.parametrize(

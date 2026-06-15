@@ -137,7 +137,7 @@ are intended for transpilation metadata, not pulse execution.
   `MultipleMeasureResult.get_counts` is queried with exactly those pairs, so
   repeated measurements of one qubit map to distinct clbits. A runnable
   example with the pulse-level timeline lives at
-  [examples/mid-circuit-measurement.ipynb](../examples/mid-circuit-measurement.ipynb).
+  [examples/simulation/mid-circuit-measurement.ipynb](../examples/simulation/mid-circuit-measurement.ipynb).
 - Bit ordering follows Qiskit conventions: clbit 0 is the least significant
   bit of the hex count keys.
 - Count totals (and memory length when `memory=True`) are validated against

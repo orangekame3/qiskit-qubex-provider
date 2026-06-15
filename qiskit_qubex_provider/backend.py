@@ -109,3 +109,12 @@ class QubexBackend(BackendV2):
                 "custom executor that implements validate(run_input)."
             )
         return self._executor.validate(run_input)
+
+    def build_classifier(self, targets: Any = None, **options: Any) -> Any:
+        """Build Qubex state classifiers for this backend's executor."""
+        if self._executor is None or not hasattr(self._executor, "build_classifier"):
+            raise ValueError(
+                "QubexBackend.build_classifier requires a Qubex executor. "
+                "Create the backend with QubexProvider.from_experiment(...)."
+            )
+        return self._executor.build_classifier(targets=targets, **options)

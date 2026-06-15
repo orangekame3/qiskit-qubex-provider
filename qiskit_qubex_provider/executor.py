@@ -28,6 +28,7 @@ class QubexCircuitExecution:
     raw_result: Any
     measured_targets: tuple[str | tuple[str, int], ...]
     target_to_clbit: Mapping[str | tuple[str, int], int]
+    readout_mitigation: bool = False
 
 
 class QubexPulseExecutor:
@@ -96,6 +97,30 @@ class QubexPulseExecutor:
             self.build_schedule(circuit)
             for circuit in _normalize_circuits(run_input)
         ]
+
+    def build_classifier(
+        self,
+        targets: Sequence[str] | str | None = None,
+        *,
+        shots: int | None = None,
+        **options: Any,
+    ) -> Any:
+        """Build Qubex state classifiers for software count conversion."""
+        build_classifier = getattr(self._qubex, "build_classifier", None)
+        if build_classifier is None:
+            measurement_service = getattr(self._qubex, "measurement_service", None)
+            build_classifier = getattr(measurement_service, "build_classifier", None)
+        if not callable(build_classifier):
+            raise ValueError(
+                "Qubex classifier build requires a Qubex Experiment-like object "
+                "that exposes build_classifier(...)."
+            )
+        if targets is None:
+            targets = list(self._qubit_labels)
+        if shots is not None:
+            options.setdefault("n_shots", _shot_count(shots))
+        options.setdefault("plot", False)
+        return build_classifier(targets=targets, **options)
 
     def build_schedule(self, circuit: QuantumCircuit) -> Any:
         """Convert a supported Qiskit circuit into a Qubex PulseSchedule."""
@@ -330,9 +355,15 @@ class QubexPulseExecutor:
         shots: int,
         options: Mapping[str, Any],
     ) -> QubexCircuitExecution:
+        all_options = dict(self._execute_options)
+        all_options.update(options)
+        readout_mitigation = _bool_option(
+            "readout_mitigation",
+            all_options.pop("readout_mitigation", False),
+        )
         execute_options = self._execution_options(
             circuit,
-            options=options,
+            options=all_options,
             shots=shots,
         )
         measured_targets, target_to_clbit = self._measurement_mapping(circuit)
@@ -344,6 +375,7 @@ class QubexPulseExecutor:
             raw_result=raw_result,
             measured_targets=tuple(measured_targets),
             target_to_clbit=target_to_clbit,
+            readout_mitigation=readout_mitigation,
         )
 
     def _execution_options(
@@ -353,17 +385,19 @@ class QubexPulseExecutor:
         options: Mapping[str, Any],
         shots: int,
     ) -> dict[str, Any]:
-        execute_options = dict(self._execute_options)
-        execute_options.update(options)
-        execute_options.setdefault("state_classification", True)
+        execute_options = dict(options)
+        execute_options.setdefault("mode", "single")
+        execute_options.setdefault("state_classification", False)
         execute_options["state_classification"] = _bool_option(
             "state_classification",
             execute_options["state_classification"],
         )
         if not execute_options["state_classification"]:
-            raise ValueError(
-                "QubexPulseExecutor requires state_classification=True to "
-                "produce Qiskit counts."
+            execute_options.setdefault("time_integration", True)
+        if "time_integration" in execute_options:
+            execute_options["time_integration"] = _bool_option(
+                "time_integration",
+                execute_options["time_integration"],
             )
         execute_options.setdefault("final_measurement", not _has_explicit_measurements(circuit))
         execute_options["final_measurement"] = _bool_option(
@@ -479,6 +513,8 @@ class QubexPulseExecutor:
         include_memory: bool,
     ) -> tuple[Counter[str], list[str]]:
         raw_counts = self._raw_counts(execution)
+        if execution.readout_mitigation:
+            raw_counts = self._mitigated_raw_counts(raw_counts, execution)
         raw_memory = self._raw_memory(execution) if include_memory else None
         counts: Counter[str] = Counter()
         memory: list[str] = []
@@ -493,6 +529,60 @@ class QubexPulseExecutor:
                 memory.extend([hex_value] * count_value)
         return counts, memory if raw_memory is None else raw_memory
 
+    def _mitigated_raw_counts(
+        self,
+        raw_counts: Mapping[Any, Any],
+        execution: QubexCircuitExecution,
+    ) -> Mapping[str, int]:
+        targets = [
+            target[0] if isinstance(target, tuple) else target
+            for target in execution.measured_targets
+        ]
+        if len(set(targets)) != len(targets):
+            raise ValueError(
+                "readout_mitigation=True does not support multiple measurements "
+                "of the same Qubex target in one circuit."
+            )
+        inverse_confusion_matrix = self._inverse_confusion_matrix(targets)
+        counts_vector = [0.0] * (1 << len(targets))
+        total = 0
+        for bitstring, count in raw_counts.items():
+            classified = _classified_bitstring(bitstring)
+            index = _bitstring_index(classified)
+            count_value = _classified_count(count)
+            counts_vector[index] += count_value
+            total += count_value
+        if total == 0:
+            return {}
+
+        mitigated = _matrix_vector_product(inverse_confusion_matrix, counts_vector)
+        mitigated = [max(0.0, value) for value in mitigated]
+        norm = sum(mitigated)
+        if norm <= 0:
+            mitigated = counts_vector
+            norm = float(total)
+        scaled = [value * total / norm for value in mitigated]
+        rounded = _round_counts_preserving_total(scaled, total)
+        return {
+            format(index, f"0{len(targets)}b"): count
+            for index, count in enumerate(rounded)
+            if count
+        }
+
+    def _inverse_confusion_matrix(self, targets: Sequence[str]) -> Sequence[Sequence[float]]:
+        for candidate in (
+            self._qubex,
+            getattr(self._qubex, "measurement", None),
+            getattr(self._qubex, "measurement_service", None),
+        ):
+            getter = getattr(candidate, "get_inverse_confusion_matrix", None)
+            if callable(getter):
+                return getter(list(targets))
+        raise ValueError(
+            "readout_mitigation=True requires the Qubex object to expose "
+            "get_inverse_confusion_matrix(targets). Build/load classifiers first."
+        )
+
     @staticmethod
     def _raw_counts(execution: QubexCircuitExecution) -> Mapping[Any, Any]:
         raw_result = execution.raw_result
@@ -502,6 +592,14 @@ class QubexPulseExecutor:
                 return get_counts(execution.measured_targets)
             except TypeError:
                 return get_counts()
+            except ValueError as exc:
+                if "Classifier is not set" in str(exc):
+                    raise ValueError(
+                        "Qubex classifier is not built. Call "
+                        "provider.build_classifier(...) or "
+                        "backend.build_classifier(...) before backend.run(...)."
+                    ) from exc
+                raise
         if isinstance(raw_result, Mapping):
             if "counts" in raw_result:
                 nested_counts = raw_result["counts"]
@@ -1059,6 +1157,45 @@ def _classified_count(value: Any) -> int:
         raise ValueError("Qubex classified counts must be non-negative integers.")
     return count
 
+
+
+def _bitstring_index(bitstring: str) -> int:
+    if any(bit not in {"0", "1"} for bit in bitstring):
+        raise ValueError(
+            f"Unsupported classified state {bitstring!r}; only 0/1 results can become Qiskit counts."
+        )
+    return int(bitstring, 2) if bitstring else 0
+
+
+def _matrix_vector_product(
+    matrix: Sequence[Sequence[float]],
+    vector: Sequence[float],
+) -> list[float]:
+    size = len(vector)
+    if len(matrix) != size:
+        raise ValueError(
+            "Qubex inverse confusion matrix size does not match measured target count."
+        )
+    result = []
+    for row in matrix:
+        if len(row) != size:
+            raise ValueError(
+                "Qubex inverse confusion matrix must be square and match measured target count."
+            )
+        result.append(sum(float(coeff) * float(value) for coeff, value in zip(row, vector)))
+    return result
+
+
+def _round_counts_preserving_total(values: Sequence[float], total: int) -> list[int]:
+    floors = [int(value) for value in values]
+    remainder = total - sum(floors)
+    fractions = sorted(
+        ((float(value) - floor, index) for index, (value, floor) in enumerate(zip(values, floors))),
+        reverse=True,
+    )
+    for _, index in fractions[:remainder]:
+        floors[index] += 1
+    return floors
 
 def _shot_count(value: Any) -> int:
     if isinstance(value, bool):
