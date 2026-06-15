@@ -111,6 +111,7 @@ estimator = provider.get_estimator()  # hardware-sampled with an executor, exact
 | Notebook: mid-circuit measurement | [examples/mid-circuit-measurement.ipynb](examples/mid-circuit-measurement.ipynb) |
 | Notebook: dynamical decoupling | [examples/dynamical-decoupling.ipynb](examples/dynamical-decoupling.ipynb) |
 | Notebook: DD fidelity demonstration (Pokharel et al. protocol) | [examples/dd-demonstration.ipynb](examples/dd-demonstration.ipynb) |
+| Notebook: Heisenberg dynamics, new vs deprecated scheduling | [examples/heisenberg.ipynb](examples/heisenberg.ipynb) |
 
 ## Development
 
