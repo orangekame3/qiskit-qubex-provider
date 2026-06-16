@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import uuid
+import warnings
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from inspect import Parameter, signature
 from math import pi
 from numbers import Integral
 from typing import Any, Literal
@@ -49,6 +51,8 @@ class QubexPulseExecutor:
         qubit_labels: Sequence[str] | None = None,
         execute_options: Mapping[str, Any] | None = None,
         timing_policy: TimingPolicy | str = "qiskit",
+        calibration_valid_days: int | None = None,
+        warn_duration_failures: bool = False,
     ) -> None:
         if qubex is None:
             raise ValueError(
@@ -60,6 +64,9 @@ class QubexPulseExecutor:
         self._qubit_labels = tuple(qubit_labels or self._infer_qubit_labels(qubex))
         self._execute_options = dict(execute_options or {})
         self._timing_policy = _timing_policy(timing_policy)
+        self._calibration_valid_days = calibration_valid_days
+        self._warn_duration_failures = warn_duration_failures
+        self._duration_failures: list[str] = []
         if not self._qubit_labels:
             raise ValueError(
                 "qubit_labels must be supplied or inferable from the Qubex object. "
@@ -71,6 +78,11 @@ class QubexPulseExecutor:
     def qubit_labels(self) -> tuple[str, ...]:
         """Return Qubex qubit labels in Qiskit physical qubit order."""
         return self._qubit_labels
+
+    @property
+    def duration_failures(self) -> tuple[str, ...]:
+        """Return duration inference failures from the latest duration probe."""
+        return tuple(self._duration_failures)
 
     def run(self, run_input: Any, **options: Any) -> QubexJob:
         """Execute one or more Qiskit circuits on Qubex."""
@@ -248,11 +260,6 @@ class QubexPulseExecutor:
                     self._sync_cr_channel_frames(schedule, sub_schedule)
                     schedule.call(sub_schedule)
                     self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
-                elif name == "cz":
-                    sub_schedule = pulse.cz(labels[0], labels[1])
-                    self._sync_cr_channel_frames(schedule, sub_schedule)
-                    schedule.call(sub_schedule)
-                    self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
                 else:
                     raise ValueError(
                         f"Unsupported Qiskit instruction {name!r} for Qubex pulse execution. "
@@ -313,10 +320,6 @@ class QubexPulseExecutor:
                     sub_schedule = pulse.cx(labels[0], labels[1])
                     self._sync_cr_channel_frames(schedule, sub_schedule)
                     schedule.call(sub_schedule)
-                elif name == "cz":
-                    sub_schedule = pulse.cz(labels[0], labels[1])
-                    self._sync_cr_channel_frames(schedule, sub_schedule)
-                    schedule.call(sub_schedule)
                 else:
                     raise ValueError(
                         f"Unsupported Qiskit instruction {name!r} for Qubex pulse execution. "
@@ -327,15 +330,16 @@ class QubexPulseExecutor:
     def instruction_durations_seconds(self) -> dict[str, dict[tuple[int, ...], float]]:
         """Infer Qiskit Target instruction durations from calibrated Qubex pulses."""
         pulse = self._pulse_source()
+        self._duration_failures = []
         durations: dict[str, dict[tuple[int, ...], float]] = {}
         for index, label in enumerate(self._qubit_labels):
             qarg = (index,)
-            self._set_duration(durations, "x", qarg, _duration_seconds_safe(lambda: pulse.x180(label)))
-            self._set_duration(durations, "sx", qarg, _duration_seconds_safe(lambda: pulse.x90(label)))
-            self._set_duration(durations, "sxdg", qarg, _duration_seconds_safe(lambda: pulse.x90m(label)))
-            self._set_duration(durations, "y", qarg, _duration_seconds_safe(lambda: pulse.y180(label)))
-            self._set_duration(durations, "h", qarg, _duration_seconds_safe(lambda: pulse.hadamard(label)))
-            self._set_duration(durations, "measure", qarg, _duration_seconds_safe(lambda: pulse.readout(label)))
+            self._set_duration(durations, "x", qarg, self._pulse_method_duration_seconds(pulse, "x180", "x", qarg, label))
+            self._set_duration(durations, "sx", qarg, self._pulse_method_duration_seconds(pulse, "x90", "sx", qarg, label))
+            self._set_duration(durations, "sxdg", qarg, self._pulse_method_duration_seconds(pulse, "x90m", "sxdg", qarg, label))
+            self._set_duration(durations, "y", qarg, self._pulse_method_duration_seconds(pulse, "y180", "y", qarg, label))
+            self._set_duration(durations, "h", qarg, self._pulse_method_duration_seconds(pulse, "hadamard", "h", qarg, label))
+            self._set_duration(durations, "measure", qarg, self._pulse_method_duration_seconds(pulse, "readout", "measure", qarg, label))
             for virtual_gate in ("id", "rz", "s", "sdg", "z", "reset"):
                 self._set_duration(durations, virtual_gate, qarg, 0.0)
         for control, control_label in enumerate(self._qubit_labels):
@@ -343,10 +347,63 @@ class QubexPulseExecutor:
                 if control == target:
                     continue
                 qarg = (control, target)
-                self._set_duration(durations, "ecr", qarg, _duration_seconds_safe(lambda c=control_label, t=target_label: pulse.zx90(c, t, echo=True)))
-                self._set_duration(durations, "cx", qarg, _duration_seconds_safe(lambda c=control_label, t=target_label: pulse.cx(c, t)))
-                self._set_duration(durations, "cz", qarg, _duration_seconds_safe(lambda c=control_label, t=target_label: pulse.cz(c, t)))
+                self._set_duration(durations, "ecr", qarg, self._pulse_method_duration_seconds(pulse, "zx90", "ecr", qarg, control_label, target_label, echo=True))
+                self._set_duration(durations, "cx", qarg, self._pulse_method_duration_seconds(pulse, "cx", "cx", qarg, control_label, target_label))
         return durations
+
+    def _pulse_method_duration_seconds(
+        self,
+        pulse: Any,
+        method_name: str,
+        gate_name: str,
+        qarg: tuple[int, ...],
+        *args: Any,
+        **kwargs: Any,
+    ) -> float | None:
+        method = getattr(pulse, method_name, None)
+        if method is None:
+            self._record_duration_failure(
+                "Qubex pulse source does not expose "
+                f"{method_name}(...); duration for {gate_name}{qarg} was not set."
+            )
+            return None
+        return self._pulse_duration_seconds(gate_name, qarg, method, *args, **kwargs)
+
+    def _pulse_duration_seconds(
+        self,
+        gate_name: str,
+        qarg: tuple[int, ...],
+        method: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> float | None:
+        try:
+            obj = _call_with_optional_valid_days(
+                method,
+                *args,
+                valid_days=self._calibration_valid_days,
+                **kwargs,
+            )
+        except Exception as exc:
+            self._record_duration_failure(
+                "Could not infer Qubex pulse duration for "
+                f"{gate_name}{qarg}: {exc}"
+            )
+            return None
+        duration = _duration_ns(obj)
+        if duration <= 0 and gate_name not in {"id", "rz", "s", "sdg", "z", "reset"}:
+            self._record_duration_failure(
+                "Qubex pulse duration for "
+                f"{gate_name}{qarg} is missing or zero; Qiskit scheduling may "
+                "not account for this operation."
+            )
+            return None
+        return duration * 1e-9
+
+    def _record_duration_failure(self, message: str) -> None:
+        self._duration_failures.append(message)
+        if self._warn_duration_failures:
+            warnings.warn(message, RuntimeWarning, stacklevel=3)
 
     def _execute_circuit(
         self,
@@ -704,7 +761,7 @@ class QubexPulseExecutor:
                 return candidate
         raise TypeError(
             "Qubex object does not expose the calibrated pulse API required for circuit execution. "
-            "Use a qubex.Experiment instance, or an object exposing x90/x180/y90/y180/z90/z180/cx/cz "
+            "Use a qubex.Experiment instance, or an object exposing x90/x180/y90/y180/z90/z180/cx "
             "and execute(schedule=..., ...). A bare qubex.Measurement session is not sufficient "
             "for gate-level Qiskit circuit execution."
         )
@@ -762,7 +819,7 @@ class QubexPulseExecutor:
         ``Qt``, so virtual-Z rotations accumulated on ``Qt`` must also rotate
         the frame of subsequent CR pulses on that channel. Production Qubex
         mirrors ``VirtualZ`` onto the CR channel the same way inside its
-        ``cnot``/``cz`` constructions.
+        ``cnot`` constructions.
         """
         for label in getattr(sub_schedule, "labels", []):
             if "-" not in label:
@@ -789,7 +846,7 @@ class QubexPulseExecutor:
                 label = self._qubit_labels[circuit.find_bit(qubit).index]
                 if label not in labels:
                     labels.append(label)
-            if instruction.operation.name in {"cx", "cz", "ecr"} and len(instruction.qubits) == 2:
+            if instruction.operation.name in {"cx", "ecr"} and len(instruction.qubits) == 2:
                 left, right = [
                     self._qubit_labels[circuit.find_bit(qubit).index]
                     for qubit in instruction.qubits
@@ -1128,12 +1185,32 @@ def _duration_ns(obj: Any) -> float:
     return float(duration)
 
 
-def _duration_seconds_safe(factory: Any) -> float | None:
+def _call_with_optional_valid_days(
+    method: Any,
+    *args: Any,
+    valid_days: int | None,
+    **kwargs: Any,
+) -> Any:
+    if valid_days is not None and _accepts_keyword(method, "valid_days"):
+        kwargs = dict(kwargs)
+        kwargs["valid_days"] = valid_days
+    return method(*args, **kwargs)
+
+
+def _accepts_keyword(method: Any, name: str) -> bool:
     try:
-        obj = factory()
-    except Exception:
-        return None
-    return _duration_ns(obj) * 1e-9
+        parameters = signature(method).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.kind == Parameter.VAR_KEYWORD
+        or (
+            parameter.name == name
+            and parameter.kind
+            in {Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY}
+        )
+        for parameter in parameters
+    )
 
 
 def _classified_bitstring(value: Any) -> str:

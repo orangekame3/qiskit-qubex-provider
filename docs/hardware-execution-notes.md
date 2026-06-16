@@ -32,9 +32,9 @@ and in the frame of* `Qt`. Any virtual-Z accumulated on `Qt`'s drive channel
 must therefore also rotate the frame of later CR pulses on `Qc-Qt`, or the
 effective CR phase is wrong and two-qubit gates silently degrade.
 
-Production Qubex handles this inside its `cnot`/`cz` constructions by adding
+Production Qubex handles this inside its `cnot` construction by adding
 the same `z180` to the CR channel whenever it adds one to the qubit channel
-(see `PulseService.cnot`/`cz` in the qubex repository). The executor extends
+(see `PulseService.cnot` in the qubex repository). The executor extends
 that bookkeeping across gate boundaries: a Qiskit circuit can place `rz` gates
 *between* two-qubit gates, and those frame shifts also have to reach the CR
 channel.
@@ -52,7 +52,7 @@ runs `_sync_cr_channel_frames`:
 Because the comparison uses the outer schedule's *final* frame shifts, it
 automatically covers every source of frame drift: explicit `rz`/`s`/`z`
 gates, the `z180` inside the `h` decomposition (`Z180·Y90`), and the
-virtual-Z corrections embedded in previous `cx`/`cz`/`ecr` sub-schedules.
+virtual-Z corrections embedded in previous `cx`/`ecr` sub-schedules.
 
 Readout channels do not need mirroring: Z-basis state classification is
 insensitive to the qubit drive frame.

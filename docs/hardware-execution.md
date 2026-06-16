@@ -42,10 +42,29 @@ counts = job.result().get_counts()
 Pass `device_topology=...` when available: the topology file supplies the
 Qiskit `Target` constraints for transpilation and scheduling, while the
 configured `Experiment` supplies pulse generation, frame tracking,
-measurement, and hardware execution. The executor infers calibrated pulse
-durations from `Experiment.pulse` and exposes those durations plus the Qubex
-sampling period (`dt`) to Qiskit, so Qiskit scheduling passes
-(`scheduling_method="asap"` / `"alap"`) use the same timing grid as Qubex.
+measurement, and hardware execution. For production workflows, write actual
+Qubex pulse durations into the topology ahead of execution:
+
+```python
+from qiskit_qubex_provider import build_device_topology
+
+topology = build_device_topology(
+    calib_note_path="qubex-config/calibration/calib_note.json",
+    params_dir="qubex-config/params",
+    pulse_source=exp,
+    calibration_valid_days=7,
+)
+
+provider = QubexProvider.from_experiment(exp, device_topology=topology)
+```
+
+`build_device_topology(..., pulse_source=exp)` builds each calibrated pulse
+or sub-schedule (`x90`, `x180`, `readout`, `zx90`, `cx`) and writes its
+actual duration into `gate_duration`. When `device_topology` is supplied,
+`from_experiment(...)` uses those durations directly and does not probe pulse
+methods again. This keeps job setup fast and makes scheduling inputs
+reproducible. Pass `refresh_instruction_durations=True` only when you
+intentionally want provider construction to re-probe pulse durations.
 
 ### Creating the Experiment through the provider
 
@@ -82,7 +101,7 @@ provider = QubexProvider.from_experiment(
 native = transpile(circuit, provider.get_backend(), optimization_level=1)
 ```
 
-The default target still exposes `cx`/`cz` for compatibility. For explicit
+The default target still exposes `cx` for compatibility. For explicit
 control, pass `basis_gates=QUBEX_NATIVE_BASIS_GATES` instead of `native=True`.
 During execution, Qiskit `ecr` instructions are emitted as Qubex echoed
 `zx90` pulse schedules.
@@ -127,7 +146,7 @@ backend.run(
 `QubexPulseExecutor` supports the calibrated gate-level subset:
 
 `id`, `x`, `sx`, `sxdg`, `y`, `h`, `s`, `sdg`, `z`, `rx(0|±π/2|π)`,
-`ry(0|±π/2|π)`, `rz(θ)`, `ecr`, `cx`, `cz`, `barrier`, `delay`, and
+`ry(0|±π/2|π)`, `rz(θ)`, `ecr`, `cx`, `barrier`, `delay`, and
 measurements without same-shot classical feedback.
 
 Not supported:

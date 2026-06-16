@@ -9,7 +9,6 @@ from typing import Any, TypeAlias
 from qiskit.circuit import Delay, Measure, Parameter, Reset
 from qiskit.circuit.library import (
     CXGate,
-    CZGate,
     ECRGate,
     HGate,
     IGate,
@@ -40,7 +39,6 @@ _DEFAULT_BASIS_GATES = (
     "h",
     "ecr",
     "cx",
-    "cz",
     "measure",
     "reset",
     "delay",
@@ -246,7 +244,7 @@ def _infer_coupling_map(
                 a, b = label_to_index[labels[0]], label_to_index[labels[1]]
                 edges.add((a, b))
                 edges.add((b, a))
-    for gate_name in ("ecr", "cx", "cz"):
+    for gate_name in ("ecr", "cx"):
         for qarg in (instruction_durations or {}).get(gate_name, {}):
             if len(qarg) == 2:
                 edges.add(qarg)
@@ -280,7 +278,6 @@ def _add_operations(
         "h": (lambda: HGate(), one_qubit_qargs),
         "ecr": (lambda: ECRGate(), two_qubit_qargs),
         "cx": (lambda: CXGate(), two_qubit_qargs),
-        "cz": (lambda: CZGate(), two_qubit_qargs),
         "measure": (lambda: Measure(), one_qubit_qargs),
         "reset": (lambda: Reset(), one_qubit_qargs),
         "delay": (lambda: Delay(duration), one_qubit_qargs),
@@ -289,7 +286,7 @@ def _add_operations(
         if gate_name not in factories:
             raise ValueError(f"Unsupported basis gate {gate_name!r}.")
         factory, qargs = factories[gate_name]
-        if gate_name in {"ecr", "cx", "cz"} and not qargs:
+        if gate_name in {"ecr", "cx"} and not qargs:
             continue
         props = _instruction_properties(
             gate_name,
@@ -353,13 +350,11 @@ def _device_topology_instruction_durations(
             durations.setdefault("ecr", {})[qarg] = float(duration) * 1e-9
         duration = (
             gate_durations.get("cx")
-            or gate_durations.get("cz")
             or gate_durations.get("rzx90")
         )
         if duration is not None:
             seconds = float(duration) * 1e-9
             durations.setdefault("cx", {})[qarg] = seconds
-            durations.setdefault("cz", {})[qarg] = seconds
     return durations
 
 

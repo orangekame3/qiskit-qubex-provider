@@ -86,14 +86,6 @@ class DurationPulse:
             ops=[("cx", control, target)],
         )
 
-    def cz(self, control, target):
-        return DurationSchedule(
-            [control, target, f"{control}-{target}"],
-            duration=28,
-            ops=[("cz", control, target)],
-        )
-
-
 class DurationSchedule:
     def __init__(self, channels=None, *, duration: float = 0.0, ops=None):
         self.labels = list(channels or [])
@@ -318,6 +310,100 @@ def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
     assert backend.target["sx"][(0,)].duration == pytest.approx(16e-9)
     assert backend.target["ecr"][(0, 1)].duration == pytest.approx(272e-9)
     assert backend.target["cx"][(0, 1)].duration == pytest.approx(272e-9)
+
+
+def test_build_device_topology_can_use_pulse_source_durations(tmp_path) -> None:
+    calib_note_path = tmp_path / "calib_note.json"
+    calib_note_path.write_text(
+        json.dumps(
+            {
+                "drag_hpi_params": {"Q00": {"duration": 16}, "Q01": {"duration": 18}},
+                "drag_pi_params": {"Q00": {"duration": 24}, "Q01": {"duration": 26}},
+                "cr_params": {"Q00-Q01": {"duration": 272}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    params_dir = tmp_path / "params"
+    params_dir.mkdir()
+    def write_metric(path, values):
+        path.write_text(
+            "data:\n"
+            + "".join(f"  {key}: {value}\n" for key, value in values.items()),
+            encoding="utf-8",
+        )
+
+    write_metric(params_dir / "x90_gate_fidelity.yaml", {"Q00": 0.99, "Q01": 0.98})
+    write_metric(params_dir / "zx90_gate_fidelity.yaml", {"Q00-Q01": 0.97})
+    write_metric(params_dir / "average_readout_fidelity.yaml", {"Q00": 0.96, "Q01": 0.95})
+
+    class Pulse(DurationPulse):
+        def readout(self, target):
+            return DurationObject(f"readout-{target}", 120 if target == "Q00" else 128)
+
+        def x90(self, target, *, valid_days=None):
+            assert valid_days == 5
+            return DurationObject(f"x90-{target}", 11 if target == "Q00" else 13)
+
+        def x180(self, target, *, valid_days=None):
+            assert valid_days == 5
+            return DurationObject(f"x180-{target}", 21 if target == "Q00" else 23)
+
+        def zx90(self, control, target, *, echo=True):
+            return DurationSchedule([control, target, f"{control}-{target}"], duration=251)
+
+        def cx(self, control, target):
+            return DurationSchedule([control, target, f"{control}-{target}"], duration=301)
+
+    topology = build_device_topology(
+        calib_note_path=calib_note_path,
+        params_dir=params_dir,
+        pulse_source=Pulse(),
+        calibration_valid_days=5,
+    )
+
+    assert topology["qubits"][0]["gate_duration"] == {
+        "rz": 0,
+        "sx": 11,
+        "x": 21,
+        "measure": 120,
+    }
+    assert topology["couplings"][0]["gate_duration"]["rzx90"] == 251
+    assert topology["couplings"][0]["gate_duration"]["ecr"] == 251
+    assert topology["couplings"][0]["gate_duration"]["cx"] == 301
+
+
+def test_provider_from_experiment_uses_topology_durations_without_refresh() -> None:
+    class FailingPulse(DurationPulse):
+        def x90(self, target):
+            raise AssertionError("duration probing should be skipped")
+
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = FailingPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    topology = {
+        "qubits": [
+            {"id": 0, "physical_id": 0, "gate_duration": {"sx": 17, "x": 29}},
+        ],
+        "couplings": [],
+    }
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        device_topology=topology,
+    ).get_backend()
+
+    assert backend.target["sx"][(0,)].duration == pytest.approx(17e-9)
+    assert backend.target["x"][(0,)].duration == pytest.approx(29e-9)
 
 
 def test_build_device_topology_infers_one_current_cr_direction(tmp_path) -> None:
@@ -866,11 +952,6 @@ def test_qubex_pulse_executor_converts_and_runs_circuit(monkeypatch) -> None:
         def cx(self, control, target):
             schedule = FakePulseSchedule([control, target])
             schedule.add(f"{control}-{target}", ("cx", control, target))
-            return schedule
-
-        def cz(self, control, target):
-            schedule = FakePulseSchedule([control, target])
-            schedule.add(f"{control}-{target}", ("cz", control, target))
             return schedule
 
     class FakeMeasureResult:
@@ -1723,7 +1804,78 @@ def test_provider_from_experiment_populates_target_durations() -> None:
     assert backend.target["rz"][(0,)].duration == 0.0
 
 
-def test_native_basis_target_exposes_ecr_without_cx_cz() -> None:
+def test_provider_from_experiment_forwards_calibration_valid_days_to_duration_probe() -> None:
+    class ValidDaysPulse(DurationPulse):
+        def __init__(self):
+            self.calls = []
+
+        def x90(self, target, *, valid_days=None):
+            self.calls.append(("x90", target, valid_days))
+            return super().x90(target)
+
+        def x180(self, target, *, valid_days=None):
+            self.calls.append(("x180", target, valid_days))
+            return super().x180(target)
+
+    class FakeMeasurementService:
+        def execute(self, **kwargs):
+            return None
+
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = ValidDaysPulse()
+            self.measurement_service = FakeMeasurementService()
+
+    experiment = FakeExperiment()
+
+    QubexProvider.from_experiment(
+        experiment,
+        calibration_valid_days=3,
+    ).get_backend()
+
+    assert ("x90", "Q0", 3) in experiment.pulse.calls
+    assert ("x180", "Q0", 3) in experiment.pulse.calls
+
+
+def test_qubex_executor_warns_when_pulse_duration_cannot_be_inferred() -> None:
+    class PartialPulse:
+        def x90(self, target):
+            return DurationObject(f"x90-{target}", 4)
+
+        def x180(self, target):
+            return DurationObject(f"x180-{target}", 8)
+
+        def y90(self, target):
+            return DurationObject(f"y90-{target}", 4)
+
+        def y180(self, target):
+            return DurationObject(f"y180-{target}", 8)
+
+        def z90(self):
+            return DurationVirtualZ(pi / 2)
+
+        def z180(self):
+            return DurationVirtualZ(pi)
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+
+        def __init__(self):
+            self.pulse = PartialPulse()
+
+    executor = QubexPulseExecutor(FakeExperiment(), warn_duration_failures=True)
+
+    with pytest.warns(RuntimeWarning, match="duration"):
+        durations = executor.instruction_durations_seconds()
+
+    assert durations["x"][(0,)] == pytest.approx(8e-9)
+    assert "cx" not in durations
+    assert any("cx" in failure for failure in executor.duration_failures)
+
+
+def test_native_basis_target_exposes_ecr_without_cx() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
             return None
@@ -1744,11 +1896,10 @@ def test_native_basis_target_exposes_ecr_without_cx_cz() -> None:
 
     assert "ecr" in backend.target.operation_names
     assert "cx" not in backend.target.operation_names
-    assert "cz" not in backend.target.operation_names
     assert backend.target["ecr"][(0, 1)].duration == pytest.approx(24e-9)
 
 
-def test_native_flag_target_exposes_ecr_without_cx_cz() -> None:
+def test_native_flag_target_exposes_ecr_without_cx() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
             return None
@@ -1769,7 +1920,6 @@ def test_native_flag_target_exposes_ecr_without_cx_cz() -> None:
 
     assert "ecr" in backend.target.operation_names
     assert "cx" not in backend.target.operation_names
-    assert "cz" not in backend.target.operation_names
 
 
 def test_native_basis_transpiles_cx_to_ecr() -> None:
@@ -1843,11 +1993,19 @@ def test_provider_from_experiment_can_use_device_topology_target() -> None:
     assert backend.target.qubit_properties[0].t1 == pytest.approx(25e-6)
     assert (0, 1) in backend.target["cx"]
     assert (1, 0) not in backend.target["cx"]
-    assert backend.target["sx"][(0,)].duration == pytest.approx(4e-9)
+    assert backend.target["sx"][(0,)].duration == pytest.approx(16e-9)
     assert backend._executor.qubit_labels == ("Q05", "Q07")
 
+    refreshed = QubexProvider.from_experiment(
+        FakeExperiment(),
+        device_topology=topology,
+        refresh_instruction_durations=True,
+    ).get_backend()
 
-def test_provider_from_device_topology_native_flag_exposes_ecr_without_cx_cz() -> None:
+    assert refreshed.target["sx"][(0,)].duration == pytest.approx(4e-9)
+
+
+def test_provider_from_device_topology_native_flag_exposes_ecr_without_cx() -> None:
     topology = {
         "name": "topology-device",
         "qubits": [
@@ -1866,7 +2024,6 @@ def test_provider_from_device_topology_native_flag_exposes_ecr_without_cx_cz() -
 
     assert "ecr" in backend.target.operation_names
     assert "cx" not in backend.target.operation_names
-    assert "cz" not in backend.target.operation_names
 
 
 def test_provider_from_experiment_allows_explicit_topology_qubit_labels() -> None:

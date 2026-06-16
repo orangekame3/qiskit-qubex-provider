@@ -19,7 +19,7 @@ backend = provider.get_backend()
 
 The provider reads `qubits`, `couplings`, qubit lifetimes (T1/T2), and gate
 durations from the file. Coupling `gate_duration.rzx90` is exposed as the
-scheduled two-qubit duration for native `ecr` and compatibility `cx`/`cz`.
+scheduled two-qubit duration for native `ecr` and compatibility `cx`.
 
 Backends built this way carry transpilation and scheduling metadata only —
 `backend.run(...)` falls back to Qiskit's local `BasicSimulator` unless an
@@ -117,6 +117,24 @@ topology = build_device_topology(
 )
 provider = QubexProvider.from_device_topology(topology)
 ```
+
+When a configured Qubex `Experiment` is available, pass it as
+`pulse_source` so the generated topology records the actual durations of the
+calibrated pulses and pulse sub-schedules that will run:
+
+```python
+topology = build_device_topology(
+    calib_note_path="qubex-config/64Qv3/calibration/calib_note.json",
+    params_dir="qubex-config/64Qv3/params",
+    pulse_source=exp,
+    calibration_valid_days=7,
+)
+```
+
+This probes `x90`, `x180`, `readout`, `zx90`, and `cx` once during
+topology generation. Later `QubexProvider.from_experiment(exp,
+device_topology=topology)` can use those saved durations without rebuilding
+the pulses during provider construction.
 
 To write both files from Python:
 
