@@ -116,6 +116,27 @@ Circuits without explicit `measure` instructions run with
 `final_measurement=True`, in which case Qubex appends the final readout
 itself and none of the above applies.
 
+For readout-crosstalk experiments, `QubexProvider.from_experiment(...)` accepts
+`readout_stagger_ns`. The default is `0`, preserving Qiskit's scheduled
+measurement start times. When set, measurements that Qiskit scheduled at the
+same start time and on the same readout multiplex group are emitted at `t`,
+`t + readout_stagger_ns`, `t + 2 * readout_stagger_ns`, and so on in circuit
+order. This is the default `readout_stagger_mode="start"`. With
+`readout_stagger_mode="sequential"`, the first readout remains at `t`, and each
+later readout in the same group starts after the previous readout window has
+ended plus `readout_stagger_ns`; this benchmarks full readout serialization
+rather than small start-time offsets. Pass
+`readout_multiplex_groups={"Q0": "mux0", "Q1": "mux0"}` or
+`readout_multiplex_groups=[["Q0", "Q1"], ["Q2", "Q3"]]` to define the groups
+explicitly. Without explicit groups, the executor uses the resolved readout
+channel resource when the Qubex object exposes it; otherwise all readout
+channels are treated as one group for backward compatibility. The executor pads
+both the readout channel and the measured qubit's drive channel up to the
+effective start. If a staggered or sequential mid-circuit measurement would
+overlap a later operation that Qiskit scheduled from the original measurement
+duration, schedule building raises the normal channel-overlap error; add
+explicit slack or use the option only for final-readout sweeps.
+
 ## Sampling grid
 
 qxpulse waveforms live on a fixed sampling grid (`DEFAULT_SAMPLING_PERIOD` is
