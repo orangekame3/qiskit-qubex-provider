@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from math import pi
@@ -86,6 +87,15 @@ class DurationPulse:
             ops=[("cx", control, target)],
         )
 
+def _load_bell_state_module():
+    path = REPO_ROOT / "examples" / "hardware" / "bell_state.py"
+    spec = importlib.util.spec_from_file_location("bell_state_example", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 class DurationSchedule:
     def __init__(self, channels=None, *, duration: float = 0.0, ops=None):
         self.labels = list(channels or [])
@@ -130,6 +140,62 @@ class DurationVirtualZ(DurationObject):
     def __init__(self, theta: float):
         super().__init__("virtual_z", 0)
         self.theta = theta
+
+
+def test_bell_state_topology_helper_outputs_native_durations_only() -> None:
+    bell_state = _load_bell_state_module()
+
+    class Pulse(DurationPulse):
+        def x90(self, target):
+            return DurationObject(f"x90-{target}", 11 if target == "Q00" else 13)
+
+        def readout(self, target):
+            return DurationObject(f"readout-{target}", 120 if target == "Q00" else 128)
+
+        def zx90(self, control, target, *, echo=True):
+            return DurationSchedule([control, target], duration=251)
+
+        def cx(self, control, target):
+            return DurationSchedule([control, target], duration=301)
+
+    topology = {
+        "qubits": [
+            {
+                "id": 0,
+                "label": "Q00",
+                "gate_duration": {"rz": 0, "sx": 16, "sxdg": 16, "x": 24, "y": 24},
+            },
+            {
+                "id": 1,
+                "label": "Q01",
+                "gate_duration": {"rz": 0, "sx": 18, "sxdg": 18, "x": 26, "y": 26},
+            },
+        ],
+        "couplings": [
+            {
+                "control": 0,
+                "target": 1,
+                "gate_duration": {"rzx90": 272, "ecr": 272, "cx": 301},
+            }
+        ],
+    }
+
+    bell_state._apply_native_gate_durations(
+        topology,
+        pulse_source=SimpleNamespace(pulse=Pulse()),
+    )
+
+    assert topology["qubits"][0]["gate_duration"] == {
+        "rz": 0,
+        "sx": 11,
+        "measure": 120,
+    }
+    assert topology["qubits"][1]["gate_duration"] == {
+        "rz": 0,
+        "sx": 13,
+        "measure": 128,
+    }
+    assert topology["couplings"][0]["gate_duration"] == {"rzx90": 251, "cx": 301}
 
 
 def test_provider_returns_backend_for_integer_qubit_count() -> None:
@@ -197,6 +263,8 @@ def test_target_uses_device_topology_metadata() -> None:
     assert target.num_qubits == 2
     assert target.qubit_properties[0].t1 == pytest.approx(25e-6)
     assert target["sx"][(0,)].duration == pytest.approx(16e-9)
+    assert target["sxdg"][(0,)].duration == pytest.approx(16e-9)
+    assert target["y"][(0,)].duration == pytest.approx(24e-9)
     assert target["measure"][(0,)].duration == pytest.approx(120e-9)
     assert target["ecr"][(0, 1)].duration == pytest.approx(272e-9)
     assert target["cx"][(0, 1)].duration == pytest.approx(272e-9)
@@ -221,6 +289,77 @@ def test_provider_from_device_topology_file(tmp_path) -> None:
     assert backend.name == "anemone"
     assert backend.target.num_qubits == 2
     assert (0, 1) in backend.target["cx"]
+
+
+def test_device_topology_target_decomposes_h_for_scheduling() -> None:
+    topology = {
+        "name": "anemone",
+        "qubits": [
+            {
+                "id": 0,
+                "physical_id": 0,
+                "gate_duration": {"rz": 0, "sx": 16, "x": 24},
+            },
+        ],
+        "couplings": [],
+    }
+    backend = QubexProvider.from_device_topology(topology).get_backend()
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+
+    scheduled = transpile(
+        circuit,
+        backend,
+        scheduling_method="alap",
+        optimization_level=1,
+    )
+
+    assert "h" not in backend.target.operation_names
+    assert "h" not in scheduled.count_ops()
+
+
+def test_device_topology_target_omits_durationless_compatibility_gates() -> None:
+    topology = {
+        "name": "anemone",
+        "qubits": [
+            {"id": 0, "physical_id": 0, "gate_duration": {"rz": 0, "sx": 16}},
+        ],
+        "couplings": [],
+    }
+
+    backend = QubexProvider.from_device_topology(topology).get_backend()
+
+    assert "sx" in backend.target.operation_names
+    assert "sxdg" in backend.target.operation_names
+    assert "x" not in backend.target.operation_names
+    assert "y" not in backend.target.operation_names
+    assert "h" not in backend.target.operation_names
+
+
+def test_device_topology_target_schedules_sxdg_from_sx_duration() -> None:
+    topology = {
+        "name": "anemone",
+        "qubits": [
+            {
+                "id": 0,
+                "physical_id": 0,
+                "gate_duration": {"rz": 0, "sx": 16, "x": 24},
+            },
+        ],
+        "couplings": [],
+    }
+    backend = QubexProvider.from_device_topology(topology).get_backend()
+    circuit = QuantumCircuit(1)
+    circuit.sxdg(0)
+
+    transpile(
+        circuit,
+        backend,
+        scheduling_method="alap",
+        optimization_level=1,
+    )
+
+    assert backend.target["sxdg"][(0,)].duration == pytest.approx(16e-9)
 
 
 def test_device_topology_label_width_matches_device_gateway() -> None:
@@ -294,7 +433,10 @@ def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
     assert topology["name"] == "test-device"
     assert topology["qubits"][0]["id"] == 0
     assert topology["qubits"][0]["physical_id"] == 0
-    assert topology["qubits"][0]["gate_duration"] == {"rz": 0, "sx": 16, "x": 24}
+    assert topology["qubits"][0]["gate_duration"] == {"rz": 0, "sx": 16}
+    assert "sxdg" not in topology["qubits"][0]["gate_duration"]
+    assert "y" not in topology["qubits"][0]["gate_duration"]
+    assert "duration_probe_failures" not in topology
     assert topology["qubits"][0]["qubit_lifetime"] == {"t1": 25.0, "t2": 30.0}
     assert topology["qubits"][0]["meas_error"]["prob_meas1_prep0"] == pytest.approx(0.09)
     assert topology["couplings"] == [
@@ -308,6 +450,7 @@ def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
 
     backend = QubexProvider.from_device_topology(topology).get_backend()
     assert backend.target["sx"][(0,)].duration == pytest.approx(16e-9)
+    assert backend.target["sxdg"][(0,)].duration == pytest.approx(16e-9)
     assert backend.target["ecr"][(0, 1)].duration == pytest.approx(272e-9)
     assert backend.target["cx"][(0, 1)].duration == pytest.approx(272e-9)
 
@@ -365,12 +508,17 @@ def test_build_device_topology_can_use_pulse_source_durations(tmp_path) -> None:
     assert topology["qubits"][0]["gate_duration"] == {
         "rz": 0,
         "sx": 11,
-        "x": 21,
         "measure": 120,
     }
-    assert topology["couplings"][0]["gate_duration"]["rzx90"] == 251
-    assert topology["couplings"][0]["gate_duration"]["ecr"] == 251
-    assert topology["couplings"][0]["gate_duration"]["cx"] == 301
+    assert "sxdg" not in topology["qubits"][0]["gate_duration"]
+    assert "y" not in topology["qubits"][0]["gate_duration"]
+    assert topology["couplings"][0]["gate_duration"] == {"rzx90": 251, "cx": 301}
+    assert "duration_probe_failures" not in topology
+
+    backend = QubexProvider.from_device_topology(topology).get_backend()
+    assert backend.target["measure"][(0,)].duration == pytest.approx(120e-9)
+    assert backend.target["ecr"][(0, 1)].duration == pytest.approx(251e-9)
+    assert backend.target["cx"][(0, 1)].duration == pytest.approx(301e-9)
 
 
 def test_provider_from_experiment_uses_topology_durations_without_refresh() -> None:
@@ -403,7 +551,9 @@ def test_provider_from_experiment_uses_topology_durations_without_refresh() -> N
     ).get_backend()
 
     assert backend.target["sx"][(0,)].duration == pytest.approx(17e-9)
+    assert backend.target["sxdg"][(0,)].duration == pytest.approx(17e-9)
     assert backend.target["x"][(0,)].duration == pytest.approx(29e-9)
+    assert backend.target["y"][(0,)].duration == pytest.approx(29e-9)
 
 
 def test_build_device_topology_infers_one_current_cr_direction(tmp_path) -> None:
@@ -1798,7 +1948,7 @@ def test_provider_from_experiment_populates_target_durations() -> None:
     assert backend.target["x"][(0,)].duration == pytest.approx(8e-9)
     assert backend.target["sx"][(0,)].duration == pytest.approx(4e-9)
     assert backend.target["h"][(0,)].duration == pytest.approx(12e-9)
-    assert backend.target["ecr"][(0, 1)].duration == pytest.approx(24e-9)
+    assert backend.target["cx"][(0, 1)].duration == pytest.approx(24e-9)
     assert backend.target["cx"][(0, 1)].duration == pytest.approx(24e-9)
     assert backend.target["measure"][(0,)].duration == pytest.approx(20e-9)
     assert backend.target["rz"][(0,)].duration == 0.0
@@ -1875,7 +2025,7 @@ def test_qubex_executor_warns_when_pulse_duration_cannot_be_inferred() -> None:
     assert any("cx" in failure for failure in executor.duration_failures)
 
 
-def test_native_basis_target_exposes_ecr_without_cx() -> None:
+def test_native_basis_target_exposes_cx_without_ecr() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
             return None
@@ -1894,12 +2044,11 @@ def test_native_basis_target_exposes_ecr_without_cx() -> None:
         basis_gates=QUBEX_NATIVE_BASIS_GATES,
     ).get_backend()
 
-    assert "ecr" in backend.target.operation_names
-    assert "cx" not in backend.target.operation_names
-    assert backend.target["ecr"][(0, 1)].duration == pytest.approx(24e-9)
+    assert set(backend.target.operation_names) == {"rz", "sx", "cx", "measure", "delay"}
+    assert backend.target["cx"][(0, 1)].duration == pytest.approx(24e-9)
 
 
-def test_native_flag_target_exposes_ecr_without_cx() -> None:
+def test_native_flag_target_exposes_cx_without_ecr() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
             return None
@@ -1918,11 +2067,10 @@ def test_native_flag_target_exposes_ecr_without_cx() -> None:
         native=True,
     ).get_backend()
 
-    assert "ecr" in backend.target.operation_names
-    assert "cx" not in backend.target.operation_names
+    assert set(backend.target.operation_names) == {"rz", "sx", "cx", "measure", "delay"}
 
 
-def test_native_basis_transpiles_cx_to_ecr() -> None:
+def test_native_basis_transpiles_to_minimal_native_gates() -> None:
     class FakeMeasurementService:
         def execute(self, **kwargs):
             return None
@@ -1941,12 +2089,14 @@ def test_native_basis_transpiles_cx_to_ecr() -> None:
         basis_gates=QUBEX_NATIVE_BASIS_GATES,
     ).get_backend()
     circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.x(1)
     circuit.cx(0, 1)
 
     transpiled = transpile(circuit, backend, optimization_level=1)
 
-    assert "cx" not in transpiled.count_ops()
-    assert "ecr" in transpiled.count_ops()
+    assert set(transpiled.count_ops()) <= {"rz", "sx", "cx", "delay"}
+    assert "cx" in transpiled.count_ops()
 
 
 def test_provider_from_experiment_can_use_device_topology_target() -> None:
@@ -2005,7 +2155,7 @@ def test_provider_from_experiment_can_use_device_topology_target() -> None:
     assert refreshed.target["sx"][(0,)].duration == pytest.approx(4e-9)
 
 
-def test_provider_from_device_topology_native_flag_exposes_ecr_without_cx() -> None:
+def test_provider_from_device_topology_native_flag_exposes_cx_without_ecr() -> None:
     topology = {
         "name": "topology-device",
         "qubits": [
@@ -2022,8 +2172,7 @@ def test_provider_from_device_topology_native_flag_exposes_ecr_without_cx() -> N
         native=True,
     ).get_backend()
 
-    assert "ecr" in backend.target.operation_names
-    assert "cx" not in backend.target.operation_names
+    assert set(backend.target.operation_names) == {"rz", "cx", "delay"}
 
 
 def test_provider_from_experiment_allows_explicit_topology_qubit_labels() -> None:
@@ -2145,8 +2294,7 @@ def test_provider_from_experiment_config_forwards_backend_basis_gates(monkeypatc
         basis_gates=QUBEX_NATIVE_BASIS_GATES,
     ).get_backend()
 
-    assert "ecr" in backend.target.operation_names
-    assert "cx" not in backend.target.operation_names
+    assert set(backend.target.operation_names) == {"rz", "sx", "cx", "measure", "delay"}
 
 
 def test_provider_from_experiment_config_native_flag_is_backend_only(monkeypatch) -> None:
@@ -2173,8 +2321,7 @@ def test_provider_from_experiment_config_native_flag_is_backend_only(monkeypatch
         native=True,
     ).get_backend()
 
-    assert "ecr" in backend.target.operation_names
-    assert "cx" not in backend.target.operation_names
+    assert set(backend.target.operation_names) == {"rz", "sx", "cx", "measure", "delay"}
 
 
 def test_backend_validate_builds_schedule_without_executing(monkeypatch) -> None:

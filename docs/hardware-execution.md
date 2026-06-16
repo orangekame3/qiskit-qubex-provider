@@ -88,9 +88,10 @@ explicitly so Qiskit physical qubit indices map to the intended Qubex labels.
 
 ## Native basis gates
 
-Qubex's native two-qubit pulse is echoed cross-resonance. To transpile to the
-native gate set, pass `native=True`; Qiskit then decomposes `cx` into `ecr`
-plus single-qubit gates:
+Qubex's execution gate set exposed to Qiskit is `rz`, `sx`, and `cx`;
+`measure` and `delay` are also available as circuit timing and readout
+operations. To transpile to this target, pass `native=True`; Qiskit then
+decomposes compatibility gates such as `x` and `h` while preserving `cx`:
 
 ```python
 provider = QubexProvider.from_experiment(
@@ -101,10 +102,10 @@ provider = QubexProvider.from_experiment(
 native = transpile(circuit, provider.get_backend(), optimization_level=1)
 ```
 
-The default target still exposes `cx` for compatibility. For explicit
-control, pass `basis_gates=QUBEX_NATIVE_BASIS_GATES` instead of `native=True`.
-During execution, Qiskit `ecr` instructions are emitted as Qubex echoed
-`zx90` pulse schedules.
+The default target still exposes additional compatibility gates when their
+durations are known. For explicit control, pass
+`basis_gates=QUBEX_NATIVE_BASIS_GATES` instead of `native=True`. During
+execution, Qiskit `cx` instructions are emitted as Qubex `cx` pulse schedules.
 
 ## Preflight validation
 

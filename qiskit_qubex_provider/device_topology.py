@@ -192,11 +192,6 @@ def build_device_topology(
             for control, target in couplings
         ],
         "calibrated_at": _calibrated_at(calib_note),
-        **(
-            {"duration_probe_failures": pulse_duration_failures}
-            if pulse_duration_failures
-            else {}
-        ),
     }
 
 
@@ -792,7 +787,6 @@ def _build_qubit_entry(
     gate_duration = {
         "rz": 0,
         "sx": _duration(calib_note, "drag_hpi_params", label, default=20),
-        "x": _duration(calib_note, "drag_pi_params", label, default=20),
     }
     if pulse is not None:
         gate_duration.update(
@@ -934,9 +928,9 @@ def _resolve_pulse_source(source: Any | None) -> Any | None:
     if source is None:
         return None
     for candidate in (
-        source,
         getattr(source, "pulse", None),
         getattr(source, "pulse_service", None),
+        source,
     ):
         if candidate is not None:
             return candidate
@@ -954,7 +948,6 @@ def _pulse_qubit_durations(
     durations: dict[str, int] = {"rz": 0}
     for gate_name, method_name in (
         ("sx", "x90"),
-        ("x", "x180"),
         ("measure", "readout"),
     ):
         duration = _pulse_duration_ns(
@@ -981,25 +974,31 @@ def _pulse_coupling_durations(
     warn_duration_failures: bool,
 ) -> dict[str, int]:
     durations: dict[str, int] = {}
-    for gate_name, method_name, kwargs in (
-        ("rzx90", "zx90", {"echo": True}),
-        ("cx", "cx", {}),
-    ):
-        duration = _pulse_duration_ns(
-            pulse,
-            method_name,
-            control_label,
-            target_label,
-            failures=failures,
-            failure_context=f"{gate_name}({control_label},{target_label})",
-            calibration_valid_days=calibration_valid_days,
-            warn_duration_failures=warn_duration_failures,
-            **kwargs,
-        )
-        if duration is not None:
-            durations[gate_name] = duration
-            if gate_name == "rzx90":
-                durations.setdefault("ecr", duration)
+    rzx90_duration = _pulse_duration_ns(
+        pulse,
+        "zx90",
+        control_label,
+        target_label,
+        failures=failures,
+        failure_context=f"rzx90({control_label},{target_label})",
+        calibration_valid_days=calibration_valid_days,
+        warn_duration_failures=warn_duration_failures,
+        echo=True,
+    )
+    if rzx90_duration is not None:
+        durations["rzx90"] = rzx90_duration
+    cx_duration = _pulse_duration_ns(
+        pulse,
+        "cx",
+        control_label,
+        target_label,
+        failures=failures,
+        failure_context=f"cx({control_label},{target_label})",
+        calibration_valid_days=calibration_valid_days,
+        warn_duration_failures=warn_duration_failures,
+    )
+    if cx_duration is not None:
+        durations["cx"] = cx_duration
     return durations
 
 
@@ -1301,7 +1300,7 @@ def _qubit_hover_text(
         f"<br>t1: {_safe_float(lifetime.get('t1'), default=0.0):.2f} us"
         f"<br>t2: {_safe_float(lifetime.get('t2'), default=0.0):.2f} us"
         f"<br>sx: {_safe_float(gate_duration.get('sx'), default=0.0):.0f} ns"
-        f"<br>x: {_safe_float(gate_duration.get('x'), default=0.0):.0f} ns"
+        f"<br>measure: {_safe_float(gate_duration.get('measure'), default=0.0):.0f} ns"
     )
 
 

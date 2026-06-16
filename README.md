@@ -108,8 +108,8 @@ without probing Qubex pulse methods again. Pass
 `refresh_instruction_durations=True` only when you intentionally want to
 re-probe pulse durations while constructing the provider.
 
-Pass `native=True` to transpile to the native gate set (`ecr` instead of
-`cx`).
+Pass `native=True` to transpile to the Qubex execution gate set (`rz`,
+`sx`, and `cx`).
 
 ## Primitives
 
