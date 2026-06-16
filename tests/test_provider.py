@@ -320,6 +320,58 @@ def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
     assert backend.target["cx"][(0, 1)].duration == pytest.approx(272e-9)
 
 
+def test_build_device_topology_infers_one_current_cr_direction(tmp_path) -> None:
+    calib_note_path = tmp_path / "calib_note.json"
+    calib_note_path.write_text(
+        json.dumps(
+            {
+                "drag_hpi_params": {
+                    "Q00": {"duration": 16},
+                    "Q01": {"duration": 18},
+                },
+                "drag_pi_params": {
+                    "Q00": {"duration": 24},
+                    "Q01": {"duration": 26},
+                },
+                "cr_params": {
+                    "Q00-Q01": {"duration": 272, "timestamp": "2026-01-01 00:00:00"},
+                    "Q01-Q00": {"duration": 288, "timestamp": "2026-01-02 00:00:00"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    params_dir = tmp_path / "params"
+    params_dir.mkdir()
+    (params_dir / "x90_gate_fidelity.yaml").write_text(
+        "data:\n  Q00: 0.99\n  Q01: 0.98\n",
+        encoding="utf-8",
+    )
+    (params_dir / "zx90_gate_fidelity.yaml").write_text(
+        "data:\n  Q00-Q01: 0.97\n",
+        encoding="utf-8",
+    )
+    (params_dir / "average_readout_fidelity.yaml").write_text(
+        "data:\n  Q00: 0.99\n  Q01: 0.98\n",
+        encoding="utf-8",
+    )
+
+    topology = build_device_topology(
+        calib_note_path=calib_note_path,
+        params_dir=params_dir,
+        qubits=[0, 1],
+        only_maximum_connected=False,
+    )
+
+    assert topology["couplings"] == [
+        {
+            "control": 1,
+            "target": 0,
+            "fidelity": 0.97,
+            "gate_duration": {"rzx90": 288},
+        }
+    ]
+
 def test_build_device_topology_accepts_qdash_style_request(tmp_path) -> None:
     calib_note_path = tmp_path / "calib_note.json"
     calib_note_path.write_text(
@@ -639,6 +691,7 @@ def test_build_device_topology_svg_renders_topology() -> None:
     assert "Q00" in svg
     assert "Q01" in svg
     assert "q0 -> q1" in svg
+    assert '<path d="M ' in svg
 
 
 def test_device_topology_examples_are_loadable() -> None:

@@ -22,8 +22,8 @@ By default the script uses `examples/hardware/qubex-config`. To use a different 
 
 The script validates the transpiled schedule first, builds QUBEX classifiers through `provider.build_classifier(...)`, then runs `backend.run(...)` with the provider's software-classification path.
 
-## Scheduling comparison notebook
+## Scheduling comparison notebooks
 
-Open [`scheduling_comparison.ipynb`](scheduling_comparison.ipynb) to run a 2-qubit Heisenberg comparison on hardware. The notebook plots an ideal simulation reference, compares ALAP and ASAP hardware sweeps, and then measures a held Heisenberg state with and without XY4 dynamical decoupling.
+Open [`scheduling_comparison.ipynb`](scheduling_comparison.ipynb) to run a Bell-pair 2-qubit Heisenberg comparison on the qubits configured by `bell_state.py`. Open [`scheduling_comparison_4q.ipynb`](scheduling_comparison_4q.ipynb) to run the 4-qubit version over all labels in `bell_state.DEFAULT_QUBIT_LABELS`.
 
-Because this is under `examples/hardware`, `RUN_ON_HARDWARE` defaults to `True`. Set it to `False` in the setup cell when you only want compilation, schedule validation, and the ideal simulation.
+Both notebooks plot an ideal simulation reference, compare `timing_policy="qiskit"` with ALAP scheduling against `timing_policy="legacy_device_gateway"`, and can run the same sweep on hardware. Because this is under `examples/hardware`, `RUN_ON_HARDWARE` defaults to `True`. Set it to `False` in the setup cell when you only want compilation, schedule validation, and the ideal simulation.

@@ -20,8 +20,8 @@ from qiskit_qubex_provider import (
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_DEVICE_ID = "144Qv2"
-DEFAULT_QUBIT_LABELS = ("Q072", "Q074", "Q075")
-DEFAULT_BELL_PAIR = ("Q072", "Q074")
+DEFAULT_QUBIT_LABELS = ("Q036", "Q037", "Q038", "Q039")
+DEFAULT_BELL_PAIR = ("Q036", "Q037")
 DEFAULT_SHOTS = 1000
 
 
@@ -181,12 +181,21 @@ def bell_initial_layout(
     qubit_labels: tuple[str, ...],
     bell_pair: tuple[str, str],
 ) -> list[int]:
+    return labels_initial_layout(qubit_labels=qubit_labels, circuit_labels=bell_pair)
+
+
+def labels_initial_layout(
+    *,
+    qubit_labels: tuple[str, ...],
+    circuit_labels: tuple[str, ...],
+) -> list[int]:
     index_by_label = {label: index for index, label in enumerate(qubit_labels)}
     try:
-        return [index_by_label[label] for label in bell_pair]
+        return [index_by_label[label] for label in circuit_labels]
     except KeyError as exc:
         raise ValueError(
-            f"bell_pair={bell_pair!r} must be contained in qubit_labels={qubit_labels!r}."
+            f"circuit_labels={circuit_labels!r} must be contained in "
+            f"qubit_labels={qubit_labels!r}."
         ) from exc
 
 

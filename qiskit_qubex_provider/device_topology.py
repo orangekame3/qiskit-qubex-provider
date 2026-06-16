@@ -419,12 +419,14 @@ def build_device_topology_svg(topology: Mapping[str, Any]) -> str:
         fidelity = _safe_float(coupling.get("fidelity"), default=0.0)
         color = _fidelity_color(fidelity)
         line_start, line_end = _shortened_line(x1, y1, x2, y2, radius=28)
+        curve_control = _edge_curve_control(line_start, line_end, control=control, target=target)
         parts.append(
-            f'<line x1="{line_start[0]:.2f}" y1="{line_start[1]:.2f}" '
-            f'x2="{line_end[0]:.2f}" y2="{line_end[1]:.2f}" '
-            f'stroke="{color}" stroke-width="5" stroke-linecap="round" '
+            f'<path d="M {line_start[0]:.2f},{line_start[1]:.2f} '
+            f'Q {curve_control[0]:.2f},{curve_control[1]:.2f} '
+            f'{line_end[0]:.2f},{line_end[1]:.2f}" '
+            f'fill="none" stroke="{color}" stroke-width="5" stroke-linecap="round" '
             f'marker-end="url(#arrow)" opacity="0.82">'
-            f'<title>q{control} -> q{target}, fidelity {fidelity:.4f}</title></line>'
+            f'<title>q{control} -> q{target}, fidelity {fidelity:.4f}</title></path>'
         )
     for qubit in qubits:
         qubit_id = int(qubit["id"])
@@ -1143,6 +1145,29 @@ def _shortened_line(
     return (x1 + ux * radius, y1 + uy * radius), (x2 - ux * radius, y2 - uy * radius)
 
 
+def _edge_curve_control(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    *,
+    control: int,
+    target: int,
+) -> tuple[float, float]:
+    x1, y1 = start
+    x2, y2 = end
+    dx = x2 - x1
+    dy = y2 - y1
+    distance = math.hypot(dx, dy)
+    if distance == 0:
+        return start
+    mid_x = (x1 + x2) / 2
+    mid_y = (y1 + y2) / 2
+    perpendicular_x = -dy / distance
+    perpendicular_y = dx / distance
+    direction = -1 if control < target else 1
+    offset = min(96.0, max(28.0, distance * 0.16)) * direction
+    return mid_x + perpendicular_x * offset, mid_y + perpendicular_y * offset
+
+
 def _safe_float(value: Any, *, default: float) -> float:
     try:
         number = float(value)
@@ -1183,12 +1208,21 @@ def _parse_coupling_label(label: str) -> tuple[int, int] | None:
 
 
 def _cr_couplings(calib_note: Mapping[str, Any]) -> list[tuple[int, int]]:
-    couplings = []
-    for label in _mapping(calib_note.get("cr_params")):
+    selected: dict[tuple[int, int], tuple[tuple[bool, str], tuple[int, int]]] = {}
+    for label, entry in _mapping(calib_note.get("cr_params")).items():
         pair = _parse_coupling_label(label)
-        if pair is not None:
-            couplings.append(pair)
-    return sorted(dict.fromkeys(couplings))
+        if pair is None:
+            continue
+        control, target = pair
+        undirected = tuple(sorted(pair))
+        entry_map = _mapping(entry)
+        score = (
+            float(entry_map.get("duration", 0) or 0) > 0,
+            str(entry_map.get("timestamp", "")),
+        )
+        if undirected not in selected or score > selected[undirected][0]:
+            selected[undirected] = (score, (control, target))
+    return sorted(pair for _, pair in selected.values())
 
 
 def _in_range(value: Any, bounds: tuple[float, float]) -> bool:
