@@ -45,18 +45,10 @@ _DEFAULT_BASIS_GATES = (
 )
 
 QUBEX_NATIVE_BASIS_GATES = (
-    "id",
     "rz",
-    "s",
-    "sdg",
     "sx",
-    "sxdg",
-    "x",
-    "y",
-    "h",
-    "ecr",
+    "cx",
     "measure",
-    "reset",
     "delay",
 )
 
@@ -105,9 +97,13 @@ def build_qubex_target(
         dt=dt,
         qubit_properties=properties,
     )
+    basis_gates = _effective_basis_gates(
+        basis_gates or _DEFAULT_BASIS_GATES,
+        instruction_durations=instruction_durations,
+    )
     _add_operations(
         target,
-        basis_gates or _DEFAULT_BASIS_GATES,
+        basis_gates,
         qubit_count,
         edges,
         instruction_durations=instruction_durations,
@@ -296,6 +292,22 @@ def _add_operations(
         target.add_instruction(factory(), props, name=gate_name)
 
 
+def _effective_basis_gates(
+    basis_gates: Iterable[str],
+    *,
+    instruction_durations: Mapping[str, Mapping[tuple[int, ...], float]] | None,
+) -> tuple[str, ...]:
+    gates = tuple(basis_gates)
+    if instruction_durations is None:
+        return gates
+    always_available = {"rz", "delay"}
+    return tuple(
+        gate
+        for gate in gates
+        if gate in always_available or (instruction_durations or {}).get(gate)
+    )
+
+
 def _instruction_properties(
     gate_name: str,
     qargs: Sequence[tuple[int, ...]],
@@ -331,7 +343,13 @@ def _device_topology_instruction_durations(
             duration = gate_durations.get(gate_name)
             if duration is not None:
                 durations.setdefault(gate_name, {})[(index,)] = float(duration) * 1e-9
-        for zero_duration_gate in ("id", "s", "sdg", "z", "reset"):
+        sx_duration = gate_durations.get("sx")
+        if gate_durations.get("sxdg") is None and sx_duration is not None:
+            durations.setdefault("sxdg", {})[(index,)] = float(sx_duration) * 1e-9
+        x_duration = gate_durations.get("x")
+        if gate_durations.get("y") is None and x_duration is not None:
+            durations.setdefault("y", {})[(index,)] = float(x_duration) * 1e-9
+        for zero_duration_gate in ("id", "rz", "s", "sdg", "z", "reset"):
             durations.setdefault(zero_duration_gate, {})[(index,)] = 0.0
 
     for coupling in source.get("couplings", []):

@@ -42,6 +42,7 @@ def generate_device_topology(
     qubit_labels: tuple[str, ...],
     bell_pair: tuple[str, str],
     output_path: Path,
+    pulse_source=None,
 ) -> Path:
     """Generate and write a Device Gateway topology for the selected qubits."""
     device_config = config_root / device_id
@@ -88,6 +89,7 @@ def generate_device_topology(
         "qubits": qubits,
         "couplings": couplings,
     }
+    _apply_native_gate_durations(topology, pulse_source=pulse_source)
     _validate_topology_subset(topology, qubit_labels, bell_pair=bell_pair)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
@@ -99,6 +101,91 @@ def generate_device_topology(
         encoding="utf-8",
     )
     return output_path
+
+
+def _apply_native_gate_durations(topology: dict, *, pulse_source=None) -> None:
+    pulse = _resolve_pulse_source(pulse_source)
+    labels_by_logical_id = {
+        int(qubit["id"]): str(qubit["label"])
+        for qubit in topology["qubits"]
+    }
+
+    for qubit in topology["qubits"]:
+        label = str(qubit["label"])
+        original = dict(qubit.get("gate_duration") or {})
+        gate_duration = {"rz": 0}
+        sx_duration = _pulse_duration_ns(pulse, "x90", label) if pulse is not None else None
+        if sx_duration is None:
+            sx_duration = original.get("sx")
+        if sx_duration is not None:
+            gate_duration["sx"] = int(sx_duration)
+        measure_duration = (
+            _pulse_duration_ns(pulse, "readout", label) if pulse is not None else None
+        )
+        if measure_duration is not None:
+            gate_duration["measure"] = int(measure_duration)
+        qubit["gate_duration"] = gate_duration
+
+    for coupling in topology["couplings"]:
+        control = int(coupling["control"])
+        target = int(coupling["target"])
+        original = dict(coupling.get("gate_duration") or {})
+        duration = None
+        if pulse is not None:
+            duration = _pulse_duration_ns(
+                pulse,
+                "zx90",
+                labels_by_logical_id[control],
+                labels_by_logical_id[target],
+                echo=True,
+            )
+        gate_duration = {"rzx90": int(duration or 0)}
+        cx_duration = None
+        if pulse is not None:
+            cx_duration = _pulse_duration_ns(
+                pulse,
+                "cx",
+                labels_by_logical_id[control],
+                labels_by_logical_id[target],
+            )
+        if cx_duration is None:
+            cx_duration = original.get("cx")
+        if cx_duration is not None:
+            gate_duration["cx"] = int(cx_duration)
+        coupling["gate_duration"] = gate_duration
+
+
+def _resolve_pulse_source(source):
+    if source is None:
+        return None
+    for candidate in (
+        getattr(source, "pulse", None),
+        getattr(source, "pulse_service", None),
+        source,
+    ):
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _pulse_duration_ns(pulse, method_name: str, *args, **kwargs) -> int | None:
+    method = getattr(pulse, method_name, None)
+    if method is None:
+        return None
+    try:
+        obj = method(*args, **kwargs)
+    except TypeError:
+        if "echo" not in kwargs:
+            return None
+        kwargs = dict(kwargs)
+        kwargs.pop("echo", None)
+        obj = method(*args, **kwargs)
+    duration = getattr(obj, "cached_duration", None)
+    if duration is None:
+        duration = getattr(obj, "duration", None)
+    if duration is None:
+        return None
+    return int(duration)
 
 
 def make_circuit() -> QuantumCircuit:
@@ -156,17 +243,18 @@ def prepare_provider(
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
     os.environ.setdefault("XDG_CACHE_HOME", "/tmp")
 
+    experiment = make_experiment(
+        config_root=config_root,
+        device_id=device_id,
+        qubit_labels=qubit_labels,
+    )
     generate_device_topology(
         config_root=config_root,
         device_id=device_id,
         qubit_labels=qubit_labels,
         bell_pair=bell_pair,
         output_path=topology_path,
-    )
-    experiment = make_experiment(
-        config_root=config_root,
-        device_id=device_id,
-        qubit_labels=qubit_labels,
+        pulse_source=experiment,
     )
     return make_provider(
         experiment=experiment,
