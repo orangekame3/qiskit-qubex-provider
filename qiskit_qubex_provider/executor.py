@@ -51,6 +51,9 @@ class QubexPulseExecutor:
         qubit_labels: Sequence[str] | None = None,
         execute_options: Mapping[str, Any] | None = None,
         timing_policy: TimingPolicy | str = "qiskit",
+        readout_stagger_ns: float = 0.0,
+        readout_stagger_mode: str = "start",
+        readout_multiplex_groups: Mapping[str, Any] | Sequence[Sequence[str]] | None = None,
         calibration_valid_days: int | None = None,
         warn_duration_failures: bool = False,
     ) -> None:
@@ -64,6 +67,14 @@ class QubexPulseExecutor:
         self._qubit_labels = tuple(qubit_labels or self._infer_qubit_labels(qubex))
         self._execute_options = dict(execute_options or {})
         self._timing_policy = _timing_policy(timing_policy)
+        self._readout_stagger_ns = _nonnegative_float(
+            "readout_stagger_ns",
+            readout_stagger_ns,
+        )
+        self._readout_stagger_mode = _readout_stagger_mode(readout_stagger_mode)
+        self._readout_multiplex_groups = _readout_multiplex_groups(
+            readout_multiplex_groups,
+        )
         self._calibration_valid_days = calibration_valid_days
         self._warn_duration_failures = warn_duration_failures
         self._duration_failures: list[str] = []
@@ -154,6 +165,8 @@ class QubexPulseExecutor:
         channel_offsets: dict[str, float] = {
             label: 0.0 for label in self._qubit_labels
         }
+        readout_group_counts: dict[tuple[float, str], int] = {}
+        readout_group_next_start: dict[tuple[float, str], float] = {}
         with pulse_schedule_cls(list(self._qubit_labels)) as schedule:
             for index, instruction in enumerate(circuit.data):
                 operation = instruction.operation
@@ -165,8 +178,7 @@ class QubexPulseExecutor:
                     if op_start_times is not None
                     else None
                 )
-
-                if start_ns is not None and labels:
+                if start_ns is not None and labels and name != "measure":
                     self._align_channels(
                         schedule,
                         blank_cls,
@@ -186,13 +198,32 @@ class QubexPulseExecutor:
                         channel_offsets[label] = channel_offsets.get(label, 0.0) + delay_ns
                 elif name == "measure":
                     readout_label = self._readout_label(labels[0])
+                    waveform = pulse.readout(labels[0])
+                    duration_ns = _duration_ns(waveform)
+                    effective_start_ns = start_ns
                     if start_ns is not None:
+                        effective_start_ns = self._staggered_readout_start_ns(
+                            start_ns,
+                            labels[0],
+                            readout_label,
+                            duration_ns,
+                            readout_group_counts,
+                            readout_group_next_start,
+                        )
+                    if effective_start_ns is not None:
+                        self._align_channels(
+                            schedule,
+                            blank_cls,
+                            channel_offsets,
+                            labels,
+                            effective_start_ns,
+                        )
                         self._align_channels(
                             schedule,
                             blank_cls,
                             channel_offsets,
                             [readout_label],
-                            start_ns,
+                            effective_start_ns,
                         )
                     else:
                         # Without Qiskit start times, channels only synchronize at
@@ -204,9 +235,7 @@ class QubexPulseExecutor:
                             channel_offsets,
                             [labels[0], readout_label],
                         )
-                    waveform = pulse.readout(labels[0])
                     schedule.add(readout_label, waveform)
-                    duration_ns = _duration_ns(waveform)
                     if duration_ns > 0:
                         # Occupy the drive channel for the readout window so later
                         # gates on this qubit land after the readout, keeping the
@@ -1018,6 +1047,42 @@ class QubexPulseExecutor:
                 schedule.add(label, blank_cls(delta))
                 channel_offsets[label] = start_ns
 
+    def _staggered_readout_start_ns(
+        self,
+        start_ns: float,
+        target_label: str,
+        readout_label: str,
+        duration_ns: float,
+        readout_group_counts: dict[tuple[float, str], int],
+        readout_group_next_start: dict[tuple[float, str], float],
+    ) -> float:
+        if self._readout_stagger_ns == 0:
+            return start_ns
+        # Group measurements that Qiskit scheduled at the same time.  The key is
+        # rounded to avoid splitting groups on tiny floating-point conversion noise.
+        group_key = (
+            round(start_ns, 9),
+            self._readout_multiplex_group(target_label, readout_label),
+        )
+        group_index = readout_group_counts.get(group_key, 0)
+        readout_group_counts[group_key] = group_index + 1
+        if self._readout_stagger_mode == "start":
+            return start_ns + group_index * self._readout_stagger_ns
+        next_start = readout_group_next_start.get(group_key, start_ns)
+        readout_group_next_start[group_key] = next_start + duration_ns + self._readout_stagger_ns
+        return next_start
+
+    def _readout_multiplex_group(self, target_label: str, readout_label: str) -> str:
+        explicit = self._readout_multiplex_groups
+        if explicit:
+            group = explicit.get(target_label, explicit.get(readout_label))
+            if group is not None:
+                return str(group)
+        resource_key = self._resource_key(readout_label)
+        if resource_key is not None:
+            return resource_key
+        return "__all_readout__"
+
     @staticmethod
     def _advance_offsets(
         channel_offsets: dict[str, float],
@@ -1103,6 +1168,37 @@ def _timing_policy(value: str) -> TimingPolicy:
     if value in {"qiskit", "legacy_device_gateway"}:
         return value  # type: ignore[return-value]
     raise ValueError("timing_policy must be 'qiskit' or 'legacy_device_gateway'.")
+
+
+def _nonnegative_float(name: str, value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a non-negative number.") from exc
+    if number < 0:
+        raise ValueError(f"{name} must be a non-negative number.")
+    return number
+
+
+def _readout_stagger_mode(value: str) -> str:
+    if value in {"start", "sequential"}:
+        return value
+    raise ValueError("readout_stagger_mode must be 'start' or 'sequential'.")
+
+
+def _readout_multiplex_groups(
+    groups: Mapping[str, Any] | Sequence[Sequence[str]] | None,
+) -> dict[str, str]:
+    if groups is None:
+        return {}
+    if isinstance(groups, Mapping):
+        return {str(label): str(group) for label, group in groups.items()}
+    result: dict[str, str] = {}
+    for index, labels in enumerate(groups):
+        group = str(index)
+        for label in labels:
+            result[str(label)] = group
+    return result
 
 
 def _normalize_circuits(run_input: Any) -> list[QuantumCircuit]:

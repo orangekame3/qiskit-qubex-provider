@@ -2467,6 +2467,171 @@ def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
     assert rq1_ops[1][2].name == "readout-Q1"
 
 
+def test_readout_stagger_offsets_simultaneous_measurements(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1", "Q2")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(3, 3)
+    circuit.measure([0, 1, 2], [0, 1, 2])
+    circuit._op_start_times = [100, 100, 100]
+    circuit._duration = 120
+    circuit._unit = "dt"
+
+    schedule = QubexPulseExecutor(
+        FakeExperiment(),
+        readout_stagger_ns=4,
+    ).build_schedule(circuit)
+
+    readout_blanks = {
+        label: [
+            op[2].duration
+            for op in schedule.ops
+            if op[0] == "add" and op[1] == label and op[2].name == "blank"
+        ]
+        for label in ("RQ0", "RQ1", "RQ2")
+    }
+    drive_blanks = {
+        label: [
+            op[2].duration
+            for op in schedule.ops
+            if op[0] == "add" and op[1] == label and op[2].name == "blank"
+        ]
+        for label in ("Q0", "Q1", "Q2")
+    }
+
+    assert readout_blanks == {
+        "RQ0": [pytest.approx(100)],
+        "RQ1": [pytest.approx(104)],
+        "RQ2": [pytest.approx(108)],
+    }
+    assert drive_blanks["Q0"][:2] == [pytest.approx(100), pytest.approx(20)]
+    assert drive_blanks["Q1"][:2] == [pytest.approx(104), pytest.approx(20)]
+    assert drive_blanks["Q2"][:2] == [pytest.approx(108), pytest.approx(20)]
+
+
+def test_readout_stagger_sequential_starts_after_previous_readout(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1", "Q2")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(3, 3)
+    circuit.measure([0, 1, 2], [0, 1, 2])
+    circuit._op_start_times = [100, 100, 100]
+    circuit._duration = 120
+    circuit._unit = "dt"
+
+    schedule = QubexPulseExecutor(
+        FakeExperiment(),
+        readout_stagger_ns=4,
+        readout_stagger_mode="sequential",
+    ).build_schedule(circuit)
+
+    readout_blanks = {
+        label: [
+            op[2].duration
+            for op in schedule.ops
+            if op[0] == "add" and op[1] == label and op[2].name == "blank"
+        ]
+        for label in ("RQ0", "RQ1", "RQ2")
+    }
+
+    assert readout_blanks == {
+        "RQ0": [pytest.approx(100)],
+        "RQ1": [pytest.approx(124)],
+        "RQ2": [pytest.approx(148)],
+    }
+
+
+def test_readout_stagger_applies_within_multiplex_group_only(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1", "Q2")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(3, 3)
+    circuit.measure([0, 1, 2], [0, 1, 2])
+    circuit._op_start_times = [100, 100, 100]
+    circuit._duration = 120
+    circuit._unit = "dt"
+
+    schedule = QubexPulseExecutor(
+        FakeExperiment(),
+        readout_stagger_ns=4,
+        readout_multiplex_groups={"Q0": "mux-a", "Q1": "mux-a", "Q2": "mux-b"},
+    ).build_schedule(circuit)
+
+    readout_blanks = {
+        label: [
+            op[2].duration
+            for op in schedule.ops
+            if op[0] == "add" and op[1] == label and op[2].name == "blank"
+        ]
+        for label in ("RQ0", "RQ1", "RQ2")
+    }
+
+    assert readout_blanks == {
+        "RQ0": [pytest.approx(100)],
+        "RQ1": [pytest.approx(104)],
+        "RQ2": [pytest.approx(100)],
+    }
+
+
+def test_readout_stagger_can_group_by_readout_resource_metadata(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1", "Q2")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+        def get_read_out_target(self, label):
+            ids = {"RQ0": "readout-a", "RQ1": "readout-a", "RQ2": "readout-b"}
+            return SimpleNamespace(channel=SimpleNamespace(id=ids[label]))
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(3, 3)
+    circuit.measure([0, 1, 2], [0, 1, 2])
+    circuit._op_start_times = [100, 100, 100]
+    circuit._duration = 120
+    circuit._unit = "dt"
+
+    schedule = QubexPulseExecutor(
+        FakeExperiment(),
+        readout_stagger_ns=4,
+    ).build_schedule(circuit)
+
+    readout_blanks = {
+        label: [
+            op[2].duration
+            for op in schedule.ops
+            if op[0] == "add" and op[1] == label and op[2].name == "blank"
+        ]
+        for label in ("RQ0", "RQ1", "RQ2")
+    }
+
+    assert readout_blanks == {
+        "RQ0": [pytest.approx(100)],
+        "RQ1": [pytest.approx(104)],
+        "RQ2": [pytest.approx(100)],
+    }
+
+
 def test_legacy_device_gateway_timing_ignores_qiskit_start_times(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0", "Q1")

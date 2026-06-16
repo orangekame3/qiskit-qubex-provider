@@ -111,6 +111,16 @@ re-probe pulse durations while constructing the provider.
 Pass `native=True` to transpile to the Qubex execution gate set (`rz`,
 `sx`, and `cx`).
 
+For readout-crosstalk benchmarks on shared readout hardware, pass
+`readout_stagger_ns=...` to `from_experiment(...)` to offset measurements that
+Qiskit scheduled at the same start time and on the same readout multiplex group
+while leaving the default behavior unchanged. The default
+`readout_stagger_mode="start"` offsets readout start times by that step; use
+`readout_stagger_mode="sequential"` to start each readout after the previous
+readout in the same group has ended, plus the configured gap. Groups can be
+supplied with `readout_multiplex_groups=...`; otherwise the executor uses Qubex
+readout channel metadata when available.
+
 ## Primitives
 
 ```python
