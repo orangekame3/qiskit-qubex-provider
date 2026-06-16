@@ -7,8 +7,10 @@ import html
 import json
 import math
 import re
+import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
+from inspect import Parameter, signature
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +49,9 @@ def build_device_topology(
     coupling_fidelity_range: tuple[float, float] = (0.0, 1.0),
     readout_fidelity_range: tuple[float, float] = (0.0, 1.0),
     only_maximum_connected: bool = True,
+    pulse_source: Any | None = None,
+    calibration_valid_days: int | None = None,
+    warn_duration_failures: bool = False,
 ) -> dict[str, Any]:
     """Build a Device Gateway ``device-topology.json`` compatible mapping.
 
@@ -107,6 +112,8 @@ def build_device_topology(
         },
     )
     physical_qids = _infer_physical_qids(calib_note, metrics, qubits)
+    pulse = _resolve_pulse_source(pulse_source)
+    pulse_duration_failures: list[str] = []
     topology_data = _load_topology_data(
         topology=topology,
         topology_json=topology_json,
@@ -161,6 +168,10 @@ def build_device_topology(
                 metrics=metrics,
                 topology_data=topology_data,
                 qubit_fidelity_metric=qubit_fidelity_metric,
+                pulse=pulse,
+                pulse_duration_failures=pulse_duration_failures,
+                calibration_valid_days=calibration_valid_days,
+                warn_duration_failures=warn_duration_failures,
             )
             for qid in selected_qubits
         ],
@@ -173,10 +184,19 @@ def build_device_topology(
                 calib_note=calib_note,
                 metrics=metrics,
                 coupling_fidelity_metric=coupling_fidelity_metric,
+                pulse=pulse,
+                pulse_duration_failures=pulse_duration_failures,
+                calibration_valid_days=calibration_valid_days,
+                warn_duration_failures=warn_duration_failures,
             )
             for control, target in couplings
         ],
         "calibrated_at": _calibrated_at(calib_note),
+        **(
+            {"duration_probe_failures": pulse_duration_failures}
+            if pulse_duration_failures
+            else {}
+        ),
     }
 
 
@@ -762,9 +782,28 @@ def _build_qubit_entry(
     metrics: Mapping[str, Mapping[str, Any]],
     topology_data: Mapping[str, Any],
     qubit_fidelity_metric: str,
+    pulse: Any | None,
+    pulse_duration_failures: list[str],
+    calibration_valid_days: int | None,
+    warn_duration_failures: bool,
 ) -> dict[str, Any]:
     label = qid_to_label(qid, num_qubits)
     position = _scaled_position(qid, topology_data)
+    gate_duration = {
+        "rz": 0,
+        "sx": _duration(calib_note, "drag_hpi_params", label, default=20),
+        "x": _duration(calib_note, "drag_pi_params", label, default=20),
+    }
+    if pulse is not None:
+        gate_duration.update(
+            _pulse_qubit_durations(
+                pulse,
+                label,
+                failures=pulse_duration_failures,
+                calibration_valid_days=calibration_valid_days,
+                warn_duration_failures=warn_duration_failures,
+            )
+        )
     return {
         "id": logical_id,
         "physical_id": qid,
@@ -784,11 +823,7 @@ def _build_qubit_entry(
             "t2": _metric_value(metrics, "t2_echo", qid, num_qubits, None)
             or _metric_value(metrics, "t2_echo_average", qid, num_qubits, 100.0),
         },
-        "gate_duration": {
-            "rz": 0,
-            "sx": _duration(calib_note, "drag_hpi_params", label, default=20),
-            "x": _duration(calib_note, "drag_pi_params", label, default=20),
-        },
+        "gate_duration": gate_duration,
     }
 
 
@@ -801,6 +836,10 @@ def _build_coupling_entry(
     calib_note: Mapping[str, Any],
     metrics: Mapping[str, Mapping[str, Any]],
     coupling_fidelity_metric: str,
+    pulse: Any | None,
+    pulse_duration_failures: list[str],
+    calibration_valid_days: int | None,
+    warn_duration_failures: bool,
 ) -> dict[str, Any]:
     fidelity = _coupling_metric_value(
         metrics,
@@ -815,13 +854,27 @@ def _build_coupling_entry(
             f"Missing {coupling_fidelity_metric!r} for coupling "
             f"{qid_to_label(control, num_qubits)}-{qid_to_label(target, num_qubits)}."
         )
+    control_label = qid_to_label(control, num_qubits)
+    target_label = qid_to_label(target, num_qubits)
+    gate_duration = {
+        "rzx90": _coupling_duration(calib_note, control, target, num_qubits),
+    }
+    if pulse is not None:
+        gate_duration.update(
+            _pulse_coupling_durations(
+                pulse,
+                control_label,
+                target_label,
+                failures=pulse_duration_failures,
+                calibration_valid_days=calibration_valid_days,
+                warn_duration_failures=warn_duration_failures,
+            )
+        )
     return {
         "control": id_by_qid[control],
         "target": id_by_qid[target],
         "fidelity": float(fidelity),
-        "gate_duration": {
-            "rzx90": _coupling_duration(calib_note, control, target, num_qubits),
-        },
+        "gate_duration": gate_duration,
     }
 
 
@@ -875,6 +928,170 @@ def _coupling_duration(
     if entry is None:
         return 0
     return int(entry.get("duration", 0))
+
+
+def _resolve_pulse_source(source: Any | None) -> Any | None:
+    if source is None:
+        return None
+    for candidate in (
+        source,
+        getattr(source, "pulse", None),
+        getattr(source, "pulse_service", None),
+    ):
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _pulse_qubit_durations(
+    pulse: Any,
+    label: str,
+    *,
+    failures: list[str],
+    calibration_valid_days: int | None,
+    warn_duration_failures: bool,
+) -> dict[str, int]:
+    durations: dict[str, int] = {"rz": 0}
+    for gate_name, method_name in (
+        ("sx", "x90"),
+        ("x", "x180"),
+        ("measure", "readout"),
+    ):
+        duration = _pulse_duration_ns(
+            pulse,
+            method_name,
+            label,
+            failures=failures,
+            failure_context=f"{gate_name}({label})",
+            calibration_valid_days=calibration_valid_days,
+            warn_duration_failures=warn_duration_failures,
+        )
+        if duration is not None:
+            durations[gate_name] = duration
+    return durations
+
+
+def _pulse_coupling_durations(
+    pulse: Any,
+    control_label: str,
+    target_label: str,
+    *,
+    failures: list[str],
+    calibration_valid_days: int | None,
+    warn_duration_failures: bool,
+) -> dict[str, int]:
+    durations: dict[str, int] = {}
+    for gate_name, method_name, kwargs in (
+        ("rzx90", "zx90", {"echo": True}),
+        ("cx", "cx", {}),
+    ):
+        duration = _pulse_duration_ns(
+            pulse,
+            method_name,
+            control_label,
+            target_label,
+            failures=failures,
+            failure_context=f"{gate_name}({control_label},{target_label})",
+            calibration_valid_days=calibration_valid_days,
+            warn_duration_failures=warn_duration_failures,
+            **kwargs,
+        )
+        if duration is not None:
+            durations[gate_name] = duration
+            if gate_name == "rzx90":
+                durations.setdefault("ecr", duration)
+    return durations
+
+
+def _pulse_duration_ns(
+    pulse: Any,
+    method_name: str,
+    *args: Any,
+    failures: list[str],
+    failure_context: str,
+    calibration_valid_days: int | None,
+    warn_duration_failures: bool,
+    **kwargs: Any,
+) -> int | None:
+    method = getattr(pulse, method_name, None)
+    if method is None:
+        _record_duration_probe_failure(
+            failures,
+            f"Pulse source does not expose {method_name} for {failure_context}.",
+            warn=warn_duration_failures,
+        )
+        return None
+    try:
+        obj = _call_with_optional_valid_days(
+            method,
+            *args,
+            valid_days=calibration_valid_days,
+            **kwargs,
+        )
+    except Exception as exc:
+        _record_duration_probe_failure(
+            failures,
+            f"Could not build pulse for {failure_context}: {exc}",
+            warn=warn_duration_failures,
+        )
+        return None
+    duration = _duration_ns(obj)
+    if duration is None or duration <= 0:
+        _record_duration_probe_failure(
+            failures,
+            f"Pulse duration for {failure_context} is missing or zero.",
+            warn=warn_duration_failures,
+        )
+        return None
+    return int(round(duration))
+
+
+def _duration_ns(obj: Any) -> float | None:
+    duration = getattr(obj, "cached_duration", None)
+    if duration is None:
+        duration = getattr(obj, "duration", None)
+    if duration is None:
+        return None
+    return float(duration)
+
+
+def _call_with_optional_valid_days(
+    method: Any,
+    *args: Any,
+    valid_days: int | None,
+    **kwargs: Any,
+) -> Any:
+    if valid_days is not None and _accepts_keyword(method, "valid_days"):
+        kwargs = dict(kwargs)
+        kwargs["valid_days"] = valid_days
+    return method(*args, **kwargs)
+
+
+def _accepts_keyword(method: Any, name: str) -> bool:
+    try:
+        parameters = signature(method).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.kind == Parameter.VAR_KEYWORD
+        or (
+            parameter.name == name
+            and parameter.kind
+            in {Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY}
+        )
+        for parameter in parameters
+    )
+
+
+def _record_duration_probe_failure(
+    failures: list[str],
+    message: str,
+    *,
+    warn: bool,
+) -> None:
+    failures.append(message)
+    if warn:
+        warnings.warn(message, RuntimeWarning, stacklevel=3)
 
 
 def _cr_entry(

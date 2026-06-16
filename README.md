@@ -88,8 +88,28 @@ job = backend.run(transpiled, shots=1024)
 counts = job.result().get_counts()
 ```
 
+For reproducible and low-overhead scheduling, generate `device_topology` with
+Qubex pulse-derived durations ahead of execution:
+
+```python
+from qiskit_qubex_provider import build_device_topology
+
+topology = build_device_topology(
+    calib_note_path="qubex-config/calibration/calib_note.json",
+    params_dir="qubex-config/params",
+    pulse_source=exp,
+    calibration_valid_days=7,
+)
+provider = QubexProvider.from_experiment(exp, device_topology=topology)
+```
+
+When `device_topology` is supplied, `from_experiment(...)` uses its durations
+without probing Qubex pulse methods again. Pass
+`refresh_instruction_durations=True` only when you intentionally want to
+re-probe pulse durations while constructing the provider.
+
 Pass `native=True` to transpile to the native gate set (`ecr` instead of
-`cx`/`cz`).
+`cx`).
 
 ## Primitives
 

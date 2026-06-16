@@ -33,11 +33,17 @@ class QubexProvider:
         instruction_durations: Mapping[str, Mapping[tuple[int, ...], float]] | None = None,
         executor: Any | None = None,
         use_qubex_executor: bool = False,
+        calibration_valid_days: int | None = None,
+        warn_duration_failures: bool = False,
         backend_cls: type[QubexBackend] = QubexBackend,
         **backend_options: Any,
     ) -> None:
         if executor is None and use_qubex_executor:
-            executor = QubexPulseExecutor(qubex)
+            executor = QubexPulseExecutor(
+                qubex,
+                calibration_valid_days=calibration_valid_days,
+                warn_duration_failures=warn_duration_failures,
+            )
         if native and basis_gates is None:
             basis_gates = QUBEX_NATIVE_BASIS_GATES
         self._backend = backend_cls(
@@ -136,6 +142,9 @@ class QubexProvider:
         qubit_labels: Sequence[str] | None = None,
         execute_options: dict[str, Any] | None = None,
         timing_policy: str = "qiskit",
+        calibration_valid_days: int | None = None,
+        warn_duration_failures: bool = False,
+        refresh_instruction_durations: bool = False,
         native: bool = False,
         **backend_options: Any,
     ) -> "QubexProvider":
@@ -155,13 +164,20 @@ class QubexProvider:
             qubit_labels=executor_qubit_labels,
             execute_options=execute_options,
             timing_policy=timing_policy,
+            calibration_valid_days=calibration_valid_days,
+            warn_duration_failures=warn_duration_failures,
         )
         backend_options.setdefault("dt", executor.dt_seconds())
+        instruction_durations = (
+            executor.instruction_durations_seconds()
+            if topology is None or refresh_instruction_durations
+            else None
+        )
         return cls(
             topology or experiment,
             name=name,
             executor=executor,
-            instruction_durations=executor.instruction_durations_seconds(),
+            instruction_durations=instruction_durations,
             native=native,
             **backend_options,
         )
@@ -182,6 +198,9 @@ class QubexProvider:
         connect_devices: bool = False,
         execute_options: dict[str, Any] | None = None,
         timing_policy: str = "qiskit",
+        calibration_valid_days: int | None = None,
+        warn_duration_failures: bool = False,
+        refresh_instruction_durations: bool = False,
         **experiment_options: Any,
     ) -> "QubexProvider":
         """Create a Qubex Experiment and wrap it in a provider.
@@ -229,6 +248,9 @@ class QubexProvider:
             native=native,
             execute_options=execute_options,
             timing_policy=timing_policy,
+            calibration_valid_days=calibration_valid_days,
+            warn_duration_failures=warn_duration_failures,
+            refresh_instruction_durations=refresh_instruction_durations,
         )
 
 
