@@ -17,9 +17,10 @@ provider = QubexProvider.from_device_topology("device-topology.json")
 backend = provider.get_backend()
 ```
 
-The provider reads `qubits`, `couplings`, qubit lifetimes (T1/T2), and gate
-durations from the file. Coupling `gate_duration.rzx90` is exposed as the
-scheduled two-qubit duration for native `ecr` and compatibility `cx`.
+The provider reads `qubits`, `couplings`, qubit frequencies, qubit lifetimes
+(T1/T2), and gate durations from the file. Coupling `gate_duration.rzx90` is
+exposed as the scheduled two-qubit duration for native `ecr` and compatibility
+`cx`.
 
 Backends built this way carry transpilation and scheduling metadata only —
 `backend.run(...)` falls back to Qiskit's local `BasicSimulator` unless an
@@ -116,6 +117,29 @@ topology = build_device_topology(
     params_dir="qubex-config/64Qv3/params",
 )
 provider = QubexProvider.from_device_topology(topology)
+```
+
+When present in the params directory, generated qubit entries also include
+`frequency`, `anharmonicity`, `resonator_frequency`, and `readout_frequency`.
+Generated coupling entries include `coupling_strength_mhz` when
+`qubit_qubit_coupling_strength.yaml` is available. These fields are useful
+when rebuilding a pulse-level simulation model from the same topology:
+
+```python
+from qiskit_qubex_provider import (
+    build_qxsimulator_system,
+    filter_pulse_schedule_for_simulation,
+)
+from qxsimulator import QuantumSimulator
+
+system = build_qxsimulator_system(
+    topology,
+    qubit_labels=("Q28", "Q25"),
+    qubit_dimension=2,
+    include_decoherence=False,
+)
+schedule = filter_pulse_schedule_for_simulation(backend.validate(circuit)[0])
+result = QuantumSimulator(system).mesolve(schedule, dt=4.0)
 ```
 
 When a configured Qubex `Experiment` is available, pass it as

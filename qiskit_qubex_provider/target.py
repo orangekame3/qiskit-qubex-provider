@@ -160,6 +160,7 @@ def _infer_qubit_properties(
     if _is_device_topology(qubex):
         return [
             QubitProperties(
+                frequency=_hertz_from_gigahertz(qubit.get("frequency")),
                 t1=_seconds_from_microseconds(
                     (qubit.get("qubit_lifetime") or {}).get("t1")
                 ),
@@ -403,6 +404,13 @@ def _seconds_from_microseconds(value: Any) -> float | None:
     if finite_value is None:
         return None
     return finite_value * 1e-6
+
+
+def _hertz_from_gigahertz(value: Any) -> float | None:
+    finite_value = _finite_or_none(value)
+    if finite_value is None:
+        return None
+    return finite_value * 1e9
 
 
 def _parse_cr_target(target: Any) -> tuple[str, str] | None:

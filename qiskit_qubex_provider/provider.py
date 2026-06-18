@@ -35,6 +35,7 @@ class QubexProvider:
         use_qubex_executor: bool = False,
         calibration_valid_days: int | None = None,
         warn_duration_failures: bool = False,
+        sync_cr_channel_frames: bool = True,
         backend_cls: type[QubexBackend] = QubexBackend,
         **backend_options: Any,
     ) -> None:
@@ -43,6 +44,7 @@ class QubexProvider:
                 qubex,
                 calibration_valid_days=calibration_valid_days,
                 warn_duration_failures=warn_duration_failures,
+                sync_cr_channel_frames=sync_cr_channel_frames,
             )
         if native and basis_gates is None:
             basis_gates = QUBEX_NATIVE_BASIS_GATES
@@ -144,6 +146,7 @@ class QubexProvider:
         timing_policy: str = "qiskit",
         calibration_valid_days: int | None = None,
         warn_duration_failures: bool = False,
+        sync_cr_channel_frames: bool = True,
         refresh_instruction_durations: bool = False,
         native: bool = False,
         **backend_options: Any,
@@ -166,6 +169,7 @@ class QubexProvider:
             timing_policy=timing_policy,
             calibration_valid_days=calibration_valid_days,
             warn_duration_failures=warn_duration_failures,
+            sync_cr_channel_frames=sync_cr_channel_frames,
         )
         backend_options.setdefault("dt", executor.dt_seconds())
         instruction_durations = (
@@ -200,6 +204,7 @@ class QubexProvider:
         timing_policy: str = "qiskit",
         calibration_valid_days: int | None = None,
         warn_duration_failures: bool = False,
+        sync_cr_channel_frames: bool = True,
         refresh_instruction_durations: bool = False,
         **experiment_options: Any,
     ) -> "QubexProvider":
@@ -250,6 +255,7 @@ class QubexProvider:
             timing_policy=timing_policy,
             calibration_valid_days=calibration_valid_days,
             warn_duration_failures=warn_duration_failures,
+            sync_cr_channel_frames=sync_cr_channel_frames,
             refresh_instruction_durations=refresh_instruction_durations,
         )
 

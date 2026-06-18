@@ -105,6 +105,12 @@ def build_device_topology(
             "t1_average",
             "t2_echo",
             "t2_echo_average",
+            "control_frequency",
+            "qubit_frequency",
+            "qubit_anharmonicity",
+            "readout_frequency",
+            "resonator_frequency",
+            "qubit_qubit_coupling_strength",
             readout_fidelity_metric,
             "readout_fidelity_0",
             "readout_fidelity_1",
@@ -798,7 +804,35 @@ def _build_qubit_entry(
                 warn_duration_failures=warn_duration_failures,
             )
         )
-    return {
+    frequency = _metric_value(
+        metrics,
+        "control_frequency",
+        qid,
+        num_qubits,
+        None,
+    ) or _metric_value(metrics, "qubit_frequency", qid, num_qubits, None)
+    resonator_frequency = _metric_value(
+        metrics,
+        "resonator_frequency",
+        qid,
+        num_qubits,
+        None,
+    )
+    readout_frequency = _metric_value(
+        metrics,
+        "readout_frequency",
+        qid,
+        num_qubits,
+        None,
+    )
+    anharmonicity = _metric_value(
+        metrics,
+        "qubit_anharmonicity",
+        qid,
+        num_qubits,
+        None,
+    )
+    qubit_entry = {
         "id": logical_id,
         "physical_id": qid,
         "position": position,
@@ -819,6 +853,15 @@ def _build_qubit_entry(
         },
         "gate_duration": gate_duration,
     }
+    if frequency is not None:
+        qubit_entry["frequency"] = float(frequency)
+    if anharmonicity is not None:
+        qubit_entry["anharmonicity"] = float(anharmonicity)
+    if resonator_frequency is not None:
+        qubit_entry["resonator_frequency"] = float(resonator_frequency)
+    if readout_frequency is not None:
+        qubit_entry["readout_frequency"] = float(readout_frequency)
+    return qubit_entry
 
 
 def _build_coupling_entry(
@@ -864,12 +907,23 @@ def _build_coupling_entry(
                 warn_duration_failures=warn_duration_failures,
             )
         )
-    return {
+    coupling_entry = {
         "control": id_by_qid[control],
         "target": id_by_qid[target],
         "fidelity": float(fidelity),
         "gate_duration": gate_duration,
     }
+    coupling_strength = _coupling_metric_value(
+        metrics,
+        "qubit_qubit_coupling_strength",
+        control,
+        target,
+        num_qubits,
+        default=None,
+    )
+    if coupling_strength is not None:
+        coupling_entry["coupling_strength_mhz"] = float(coupling_strength)
+    return coupling_entry
 
 
 def _metric_value(

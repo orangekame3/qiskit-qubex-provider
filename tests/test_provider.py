@@ -19,11 +19,15 @@ from qiskit_qubex_provider import (
     QubexProvider,
     QubexSamplerV2,
     QUBEX_NATIVE_BASIS_GATES,
+    FakeQubexExperiment,
     build_device_topology,
     build_device_topology_svg,
     build_dynamical_decoupling_pass_manager,
+    build_qxsimulator_system,
     build_topology_aware_dynamical_decoupling_pass_manager,
     build_qubex_target,
+    filter_pulse_schedule_for_simulation,
+    materialize_pulse_schedule_for_simulation,
     qid_to_label,
     write_device_topology,
 )
@@ -102,6 +106,9 @@ class DurationSchedule:
         self.ops = list(ops or [])
         self.duration = duration
         self.cached_duration = duration
+        self.frequencies = {}
+        self.targets = {}
+        self.frame_shifts = {label: 0.0 for label in self.labels}
 
     def __enter__(self):
         return self
@@ -113,6 +120,9 @@ class DurationSchedule:
         self.ops.append(("add", label, obj))
         if label not in self.labels:
             self.labels.append(label)
+        self.frame_shifts.setdefault(label, 0.0)
+        if isinstance(obj, DurationVirtualZ):
+            self.frame_shifts[label] -= obj.theta
         self.duration += getattr(obj, "cached_duration", 0.0)
         self.cached_duration = self.duration
 
@@ -121,6 +131,7 @@ class DurationSchedule:
         for label in schedule.labels:
             if label not in self.labels:
                 self.labels.append(label)
+            self.frame_shifts[label] = self.frame_shifts.get(label, 0.0) + schedule.get_final_frame_shift(label)
         self.duration += schedule.duration
         self.cached_duration = self.duration
 
@@ -129,6 +140,21 @@ class DurationSchedule:
 
     def is_valid(self):
         return True
+
+    def set_frequency(self, label, frequency):
+        self.frequencies[label] = frequency
+
+    def get_frequency(self, label):
+        return self.frequencies.get(label)
+
+    def set_target(self, label, target):
+        self.targets[label] = target
+
+    def get_target(self, label):
+        return self.targets.get(label)
+
+    def get_final_frame_shift(self, label):
+        return self.frame_shifts.get(label, 0.0)
 
 
 class DurationBlank(DurationObject):
@@ -239,6 +265,7 @@ def test_target_uses_device_topology_metadata() -> None:
             {
                 "id": 0,
                 "physical_id": 5,
+                "frequency": 5.125,
                 "qubit_lifetime": {"t1": 25.0, "t2": 30.0},
                 "gate_duration": {"rz": 0, "sx": 16, "x": 24, "measure": 120},
             },
@@ -261,6 +288,7 @@ def test_target_uses_device_topology_metadata() -> None:
     target = build_qubex_target(topology)
 
     assert target.num_qubits == 2
+    assert target.qubit_properties[0].frequency == pytest.approx(5.125e9)
     assert target.qubit_properties[0].t1 == pytest.approx(25e-6)
     assert target["sx"][(0,)].duration == pytest.approx(16e-9)
     assert target["sxdg"][(0,)].duration == pytest.approx(16e-9)
@@ -415,6 +443,26 @@ def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
         "data:\n  Q00: 0.92\n  Q01: 0.93\n",
         encoding="utf-8",
     )
+    (params_dir / "control_frequency.yaml").write_text(
+        "data:\n  Q00: 5.1\n  Q01: 5.2\n",
+        encoding="utf-8",
+    )
+    (params_dir / "qubit_anharmonicity.yaml").write_text(
+        "data:\n  Q00: -0.31\n  Q01: -0.32\n",
+        encoding="utf-8",
+    )
+    (params_dir / "readout_frequency.yaml").write_text(
+        "data:\n  Q00: 7.1\n  Q01: 7.2\n",
+        encoding="utf-8",
+    )
+    (params_dir / "resonator_frequency.yaml").write_text(
+        "data:\n  Q00: 6.9\n  Q01: 7.0\n",
+        encoding="utf-8",
+    )
+    (params_dir / "qubit_qubit_coupling_strength.yaml").write_text(
+        "data:\n  Q00-Q01: 4.5\n",
+        encoding="utf-8",
+    )
 
     topology = build_device_topology(
         calib_note_path=calib_note_path,
@@ -438,6 +486,10 @@ def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
     assert "y" not in topology["qubits"][0]["gate_duration"]
     assert "duration_probe_failures" not in topology
     assert topology["qubits"][0]["qubit_lifetime"] == {"t1": 25.0, "t2": 30.0}
+    assert topology["qubits"][0]["frequency"] == pytest.approx(5.1)
+    assert topology["qubits"][0]["anharmonicity"] == pytest.approx(-0.31)
+    assert topology["qubits"][0]["readout_frequency"] == pytest.approx(7.1)
+    assert topology["qubits"][0]["resonator_frequency"] == pytest.approx(6.9)
     assert topology["qubits"][0]["meas_error"]["prob_meas1_prep0"] == pytest.approx(0.09)
     assert topology["couplings"] == [
         {
@@ -445,14 +497,208 @@ def test_build_device_topology_from_qubex_calibration_files(tmp_path) -> None:
             "target": 1,
             "fidelity": 0.97,
             "gate_duration": {"rzx90": 272},
+            "coupling_strength_mhz": 4.5,
         }
     ]
 
     backend = QubexProvider.from_device_topology(topology).get_backend()
+    assert backend.target.qubit_properties[0].frequency == pytest.approx(5.1e9)
     assert backend.target["sx"][(0,)].duration == pytest.approx(16e-9)
     assert backend.target["sxdg"][(0,)].duration == pytest.approx(16e-9)
     assert backend.target["ecr"][(0, 1)].duration == pytest.approx(272e-9)
     assert backend.target["cx"][(0, 1)].duration == pytest.approx(272e-9)
+
+
+def test_build_qxsimulator_system_uses_device_topology_metadata() -> None:
+    pytest.importorskip("qxsimulator")
+    topology = {
+        "qubits": [
+            {
+                "id": 0,
+                "physical_id": 28,
+                "label": "Q28",
+                "frequency": 7.9,
+                "anharmonicity": -0.31,
+                "qubit_lifetime": {"t1": 25.0, "t2": 30.0},
+            },
+            {
+                "id": 1,
+                "physical_id": 25,
+                "label": "Q25",
+                "frequency": 8.7,
+                "anharmonicity": -0.32,
+                "qubit_lifetime": {"t1": 20.0, "t2": 22.0},
+            },
+        ],
+        "couplings": [
+            {"control": 0, "target": 1, "coupling_strength_mhz": 4.5}
+        ],
+    }
+
+    system = build_qxsimulator_system(topology)
+
+    assert system.object_labels == ["Q28", "Q25"]
+    assert system.get_object("Q28").frequency == pytest.approx(7.9)
+    assert system.get_object("Q28").anharmonicity == pytest.approx(-0.31)
+    assert system.get_object("Q28").relaxation_rate == pytest.approx(1.0 / 25000.0)
+    assert system.get_object("Q28").dephasing_rate == pytest.approx(
+        1.0 / 30000.0 - 0.5 / 25000.0
+    )
+    assert system.get_coupling(("Q28", "Q25")).strength == pytest.approx(0.0045)
+
+
+def test_fake_qubex_experiment_generates_device_topology(tmp_path) -> None:
+    fake = FakeQubexExperiment.two_qubit_cr_demo(
+        qubit_lifetimes=((4.0, 3.0), (5.0, 3.5)),
+    )
+
+    topology = fake.device_topology()
+
+    assert topology["name"] == "fake-qubex-cr-demo"
+    assert topology["qubits"][0]["label"] == "Q00"
+    assert topology["qubits"][0]["physical_id"] == 0
+    assert topology["qubits"][0]["frequency"] == pytest.approx(7.157231)
+    assert topology["qubits"][0]["anharmonicity"] == pytest.approx(-0.393715)
+    assert topology["qubits"][0]["qubit_lifetime"] == {"t1": 4.0, "t2": 3.0}
+    assert topology["qubits"][0]["gate_duration"]["sx"] == 24.0
+    assert "fidelity" not in topology["qubits"][0]
+    assert "meas_error" not in topology["qubits"][0]
+    assert topology["qubits"][1]["label"] == "Q01"
+    assert topology["qubits"][1]["qubit_lifetime"] == {"t1": 5.0, "t2": 3.5}
+    assert topology["couplings"] == [
+        {
+            "control": 0,
+            "target": 1,
+            "coupling_strength_mhz": 5.0,
+        }
+    ]
+
+    calibrated_fake = FakeQubexExperiment.two_qubit_cr_demo(
+        rzx90_duration=112.0,
+        cx_duration=112.0,
+    )
+    topology_path = calibrated_fake.write_device_topology(
+        tmp_path / "device-topology.json"
+    )
+    loaded = json.loads(topology_path.read_text(encoding="utf-8"))
+    backend = QubexProvider.from_device_topology(loaded).get_backend()
+
+    assert backend.target.qubit_properties[0].frequency == pytest.approx(7.157231e9)
+    assert backend.target["sx"][(0,)].duration == pytest.approx(24e-9)
+    assert backend.target["measure"][(0,)].duration == pytest.approx(1000e-9)
+    assert backend.target["ecr"][(0, 1)].duration == pytest.approx(112e-9)
+    assert backend.target["cx"][(0, 1)].duration == pytest.approx(112e-9)
+
+
+def test_fake_qubex_experiment_topology_feeds_qxsimulator() -> None:
+    pytest.importorskip("qxsimulator")
+    topology = FakeQubexExperiment.two_qubit_cr_demo().device_topology()
+
+    system = build_qxsimulator_system(topology)
+
+    assert system.object_labels == ["Q00", "Q01"]
+    assert system.get_object("Q00").frequency == pytest.approx(7.157231)
+    assert system.get_object("Q01").anharmonicity == pytest.approx(-0.487412)
+    assert system.get_coupling(("Q00", "Q01")).strength == pytest.approx(0.005)
+
+
+def test_fake_qubex_experiment_exposes_calibration_api() -> None:
+    pytest.importorskip("qubex")
+    pytest.importorskip("qxsimulator")
+    fake = FakeQubexExperiment.two_qubit_cr_demo()
+
+    drag_result = fake.calibrate_drag_hpi_pulse(repetitions=2, plot=False)
+    classifier_result = fake.build_classifier(
+        fake.qubit_labels,
+        n_states=2,
+        n_shots=100,
+        plot=False,
+    )
+    assert "gate_duration" not in fake.device_topology()["couplings"][0]
+    cr_result = fake.obtain_cr_params(
+        fake.qubit_labels[0],
+        fake.qubit_labels[1],
+        tomography_duration=160,
+        tomography_samples=32,
+        plot=False,
+    )
+    zx90 = fake.zx90(fake.qubit_labels[0], fake.qubit_labels[1])
+    pulse_tomography = fake.pulse_tomography(
+        zx90,
+        initial_state={fake.qubit_labels[0]: "0"},
+        n_samples=4,
+        plot=False,
+    )
+    bell_result = fake.measure_bell_state(
+        fake.qubit_labels[0],
+        fake.qubit_labels[1],
+        plot=False,
+    )
+
+    for qubit in fake.qubit_labels:
+        assert drag_result[qubit]["duration"] == pytest.approx(24.0)
+        assert drag_result[qubit]["repeat"].iloc[-1]["1"] > 0.99
+        assert qubit in fake.drag_hpi_pulses
+        assert classifier_result["average_readout_fidelity"][qubit] > 0.9
+        assert qubit in fake.classifiers
+        qubit_topology = next(
+            item for item in fake.device_topology()["qubits"] if item["label"] == qubit
+        )
+        assert qubit_topology["meas_error"]["readout_assignment_error"] < 0.1
+    assert fake.device_topology()["couplings"][0]["gate_duration"] == {
+        "rzx90": fake.rzx90_duration,
+        "cx": fake.cx_duration,
+    }
+    assert fake.rzx90_duration > cr_result["cr_param"]["duration"]
+    assert set(pulse_tomography.keys()) == set(fake.qubit_labels)
+    assert bell_result["raw"].shape == (4,)
+    assert float(sum(bell_result["raw"])) <= 1.0
+
+
+def test_fake_qubex_experiment_exposes_pulse_schedule_rb_api() -> None:
+    pytest.importorskip("qubex")
+    pytest.importorskip("qxsimulator")
+    fake = FakeQubexExperiment.two_qubit_cr_demo()
+    for qubit in fake.qubit_labels:
+        fake.calibrate_drag_hpi_pulse(qubit, repetitions=1, plot=False)
+        fake.calibrate_drag_pi_pulse(qubit, repetitions=1, plot=False)
+    fake.obtain_cr_params(
+        fake.qubit_labels[0],
+        fake.qubit_labels[1],
+        tomography_duration=160,
+        tomography_samples=32,
+        plot=False,
+    )
+
+    cr_label = f"{fake.qubit_labels[0]}-{fake.qubit_labels[1]}"
+    sequence = fake.rb_sequence(cr_label, n=1, seed=1)
+    result = fake.randomized_benchmarking(
+        cr_label,
+        n_cliffords_range=[0, 1],
+        n_trials=1,
+        seeds=[1],
+        plot=False,
+    )
+
+    assert list(sequence.labels) == [fake.qubit_labels[0], cr_label, fake.qubit_labels[1]]
+    assert result[cr_label]["n_cliffords"].tolist() == [0, 1]
+    assert result[cr_label]["mean"][0] == pytest.approx(1.0)
+    assert 0.0 <= result[cr_label]["mean"][1] <= 1.0
+
+
+def test_filter_pulse_schedule_for_simulation_keeps_active_channels() -> None:
+    qxpulse = pytest.importorskip("qxpulse")
+    with qxpulse.PulseSchedule(["Q0", "Q1"]) as schedule:
+        schedule.add("Q0", qxpulse.Rect(duration=4, amplitude=0.1))
+        schedule.add("Q1", qxpulse.Blank(4))
+    schedule.set_frequency("Q0", 5.0)
+    schedule._channels["Q0"].target = "Q0"
+
+    filtered = filter_pulse_schedule_for_simulation(schedule)
+
+    assert filtered.labels == ["Q0"]
+    assert filtered.get_frequency("Q0") == pytest.approx(5.0)
+    assert filtered.get_target("Q0") == "Q0"
 
 
 def test_build_device_topology_can_use_pulse_source_durations(tmp_path) -> None:
@@ -2467,6 +2713,93 @@ def test_scheduled_circuit_start_times_become_qubex_blanks(monkeypatch) -> None:
     assert rq1_ops[1][2].name == "readout-Q1"
 
 
+def test_scheduled_two_qubit_gate_start_time_aligns_cr_channel(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1", "Q2", "Q3")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(4, 4)
+    circuit.x(0)
+    circuit.x(2)
+    circuit.cx(0, 1)
+    circuit.cx(2, 3)
+    circuit.measure(range(4), range(4))
+    circuit._op_start_times = [0, 0, 20, 20, 44, 44, 44, 44]
+    circuit._duration = 64
+    circuit._unit = "dt"
+
+    schedule = QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+    cr_blanks = [
+        (op[1], op[2].duration)
+        for op in schedule.ops
+        if op[0] == "add" and op[1] in {"Q0-Q1", "Q2-Q3"} and op[2].name == "blank"
+    ]
+    assert cr_blanks == [("Q0-Q1", pytest.approx(20)), ("Q2-Q3", pytest.approx(20))]
+
+
+def test_qubex_executor_annotates_schedule_for_qxsimulator(monkeypatch) -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+        def resolve_read_label(self, target, allow_legacy=False):
+            return f"R{target}"
+
+        def get_target(self, label):
+            if label == "Q0":
+                return SimpleNamespace(
+                    label="Q0",
+                    frequency=5.0,
+                    object=SimpleNamespace(label="Q0"),
+                )
+            if label == "Q1":
+                return SimpleNamespace(
+                    label="Q1",
+                    frequency=5.2,
+                    object=SimpleNamespace(label="Q1"),
+                )
+            if label == "Q0-Q1":
+                return SimpleNamespace(
+                    label="Q0-Q1",
+                    frequency=5.2,
+                    object=SimpleNamespace(label="Q0"),
+                )
+            if label == "RQ0":
+                return SimpleNamespace(
+                    label="RQ0",
+                    frequency=7.0,
+                    object=SimpleNamespace(label="RQ0"),
+                )
+            raise ValueError(label)
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(2, 1)
+    circuit.sx(0)
+    circuit.cx(0, 1)
+    circuit.measure(0, 0)
+
+    schedule = QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+    assert schedule.get_frequency("Q0") == pytest.approx(5.0)
+    assert schedule.get_target("Q0") == "Q0"
+    assert schedule.get_frequency("Q1") == pytest.approx(5.2)
+    assert schedule.get_target("Q1") == "Q1"
+    assert schedule.get_frequency("Q0-Q1") == pytest.approx(5.2)
+    assert schedule.get_target("Q0-Q1") == "Q0"
+    assert schedule.get_frequency("RQ0") == pytest.approx(7.0)
+    assert schedule.get_target("RQ0") == "RQ0"
+
+
 def test_legacy_device_gateway_timing_ignores_qiskit_start_times(monkeypatch) -> None:
     class FakeExperiment:
         qubit_labels = ("Q0", "Q1")
@@ -2530,6 +2863,71 @@ def test_provider_from_experiment_forwards_timing_policy() -> None:
     ).get_backend()
 
     assert backend._executor._timing_policy == "legacy_device_gateway"
+
+
+def test_provider_from_experiment_forwards_cr_frame_sync_option() -> None:
+    class FakeExperiment:
+        qubit_labels = ("Q0",)
+
+        def __init__(self):
+            self.pulse = DurationPulse()
+
+    backend = QubexProvider.from_experiment(
+        FakeExperiment(),
+        sync_cr_channel_frames=False,
+    ).get_backend()
+
+    assert backend._executor._sync_cr_channel_frames_enabled is False
+
+
+def test_qubex_executor_syncs_frame_left_by_previous_cx(monkeypatch) -> None:
+    class CxFramePulse(DurationPulse):
+        def cx(self, control, target):
+            schedule = DurationSchedule(
+                [control, target, f"{control}-{target}"],
+                duration=24,
+                ops=[("cx", control, target)],
+            )
+            schedule.add(control, DurationVirtualZ(-pi / 2))
+            return schedule
+
+    class FakeExperiment:
+        qubit_labels = ("Q0", "Q1")
+        dt = 1e-9
+
+        def __init__(self):
+            self.pulse = CxFramePulse()
+
+    monkeypatch.setattr(executor_module, "_import_pulse_schedule", lambda: DurationSchedule)
+    monkeypatch.setattr(executor_module, "_import_blank", lambda: DurationBlank)
+    circuit = QuantumCircuit(2)
+    circuit.cx(0, 1)
+    circuit.cx(1, 0)
+
+    schedule = QubexPulseExecutor(FakeExperiment()).build_schedule(circuit)
+
+    cr_frame_updates = [
+        op[2].theta
+        for op in schedule.ops
+        if op[0] == "add" and op[1] == "Q1-Q0" and op[2].name == "virtual_z"
+    ]
+    assert cr_frame_updates == [pytest.approx(-pi / 2)]
+    assert schedule.get_final_frame_shift("Q1-Q0") == pytest.approx(pi / 2)
+
+
+def test_materialized_simulation_schedule_preserves_target_final_frames() -> None:
+    qx = pytest.importorskip("qubex")
+    experiment = FakeQubexExperiment()
+    with qx.PulseSchedule(["Q00", "Q00-Q01"]) as schedule:
+        schedule.add("Q00", qx.pulse.Blank(4))
+        schedule.add("Q00", qx.pulse.VirtualZ(-pi / 2))
+        schedule.add("Q00-Q01", qx.pulse.Blank(4))
+    experiment._annotate_schedule_metadata(schedule)
+
+    materialized = materialize_pulse_schedule_for_simulation(schedule)
+
+    assert materialized.get_final_frame_shift("Q00") == pytest.approx(pi / 2)
+    assert materialized.get_final_frame_shift("Q00-Q01") == pytest.approx(pi / 2)
 
 
 def test_qubex_executor_rejects_unknown_timing_policy() -> None:

@@ -53,6 +53,7 @@ class QubexPulseExecutor:
         timing_policy: TimingPolicy | str = "qiskit",
         calibration_valid_days: int | None = None,
         warn_duration_failures: bool = False,
+        sync_cr_channel_frames: bool = True,
     ) -> None:
         if qubex is None:
             raise ValueError(
@@ -66,6 +67,7 @@ class QubexPulseExecutor:
         self._timing_policy = _timing_policy(timing_policy)
         self._calibration_valid_days = calibration_valid_days
         self._warn_duration_failures = warn_duration_failures
+        self._sync_cr_channel_frames_enabled = bool(sync_cr_channel_frames)
         self._duration_failures: list[str] = []
         if not self._qubit_labels:
             raise ValueError(
@@ -142,6 +144,7 @@ class QubexPulseExecutor:
             schedule = self._build_legacy_device_gateway_schedule(circuit)
         else:
             schedule = self._build_qiskit_timed_schedule(circuit)
+        self._annotate_schedule_metadata(schedule)
         self._validate_native_schedule(schedule)
         self._validate_resource_constraints(schedule)
         return schedule
@@ -252,11 +255,27 @@ class QubexPulseExecutor:
                     self._advance_offsets(channel_offsets, labels, duration_ns)
                 elif name == "ecr":
                     sub_schedule = pulse.zx90(labels[0], labels[1], echo=True)
+                    if start_ns is not None:
+                        self._align_channels(
+                            schedule,
+                            blank_cls,
+                            channel_offsets,
+                            getattr(sub_schedule, "labels", labels),
+                            start_ns,
+                        )
                     self._sync_cr_channel_frames(schedule, sub_schedule)
                     schedule.call(sub_schedule)
                     self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
                 elif name == "cx":
                     sub_schedule = pulse.cx(labels[0], labels[1])
+                    if start_ns is not None:
+                        self._align_channels(
+                            schedule,
+                            blank_cls,
+                            channel_offsets,
+                            getattr(sub_schedule, "labels", labels),
+                            start_ns,
+                        )
                     self._sync_cr_channel_frames(schedule, sub_schedule)
                     schedule.call(sub_schedule)
                     self._advance_offsets_for_schedule(channel_offsets, sub_schedule)
@@ -817,10 +836,12 @@ class QubexPulseExecutor:
 
         A cross-resonance channel ``Qc-Qt`` drives ``Qc`` in the frame of
         ``Qt``, so virtual-Z rotations accumulated on ``Qt`` must also rotate
-        the frame of subsequent CR pulses on that channel. Production Qubex
-        mirrors ``VirtualZ`` onto the CR channel the same way inside its
-        ``cnot`` constructions.
+        the frame of subsequent CR pulses on that channel. The pulse service
+        builds calibrated composite gates, while the provider has to preserve
+        this frame relationship when it stitches Qiskit instructions together.
         """
+        if not self._sync_cr_channel_frames_enabled:
+            return
         for label in getattr(sub_schedule, "labels", []):
             if "-" not in label:
                 continue
@@ -911,6 +932,17 @@ class QubexPulseExecutor:
             return
         if not is_valid():
             raise ValueError("Invalid Qubex pulse schedule.")
+
+    def _annotate_schedule_metadata(self, schedule: Any) -> None:
+        """Attach channel metadata required by qxsimulator PulseSchedule input."""
+        for label in getattr(schedule, "labels", ()):
+            target = self._target_metadata(label)
+            frequency = _target_frequency(target)
+            object_label = _target_object_label(target)
+            if frequency is None or object_label is None:
+                continue
+            _set_schedule_frequency(schedule, label, frequency)
+            _set_schedule_target(schedule, label, object_label)
 
     def _resource_key(self, label: str) -> str | None:
         target = self._target_metadata(label)
@@ -1300,6 +1332,48 @@ def _qxpulse_default_sampling_period_ns() -> float | None:
     except ImportError:
         return None
     return float(DEFAULT_SAMPLING_PERIOD)
+
+
+def _target_frequency(target: Any | None) -> float | None:
+    if target is None:
+        return None
+    frequency = getattr(target, "frequency", None)
+    if frequency is None:
+        return None
+    return float(frequency)
+
+
+def _target_object_label(target: Any | None) -> str | None:
+    if target is None:
+        return None
+    obj = getattr(target, "object", None)
+    object_label = getattr(obj, "label", None)
+    if object_label is not None:
+        return str(object_label)
+    label = getattr(target, "label", None)
+    if label is not None:
+        return str(label)
+    return None
+
+
+def _set_schedule_frequency(schedule: Any, label: str, frequency: float) -> None:
+    setter = getattr(schedule, "set_frequency", None)
+    if callable(setter):
+        setter(label, frequency)
+        return
+    channels = getattr(schedule, "_channels", None)
+    if isinstance(channels, Mapping) and label in channels:
+        setattr(channels[label], "frequency", frequency)
+
+
+def _set_schedule_target(schedule: Any, label: str, target: str) -> None:
+    setter = getattr(schedule, "set_target", None)
+    if callable(setter):
+        setter(label, target)
+        return
+    channels = getattr(schedule, "_channels", None)
+    if isinstance(channels, Mapping) and label in channels:
+        setattr(channels[label], "target", target)
 
 
 def _memory_slots(execution: QubexCircuitExecution) -> int:

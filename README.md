@@ -133,6 +133,8 @@ estimator = provider.get_estimator()  # hardware-sampled with an executor, exact
 | Notebook: dynamical decoupling | [examples/simulation/dynamical-decoupling.ipynb](examples/simulation/dynamical-decoupling.ipynb) |
 | Notebook: DD fidelity demonstration (Pokharel et al. protocol) | [examples/simulation/dd-demonstration.ipynb](examples/simulation/dd-demonstration.ipynb) |
 | Notebook: Heisenberg dynamics, new vs deprecated scheduling | [examples/simulation/heisenberg.ipynb](examples/simulation/heisenberg.ipynb) |
+| Notebook: pulse simulation calibration | [examples/simulation/simulation-calibration.ipynb](examples/simulation/simulation-calibration.ipynb) |
+| Notebook: fake QUBEX calibration workflow and topology generation | [examples/simulation/fake-qubex-experiment.ipynb](examples/simulation/fake-qubex-experiment.ipynb) |
 
 ## Development
 

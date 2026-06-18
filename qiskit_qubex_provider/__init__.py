@@ -26,6 +26,12 @@ from .pulse_visualization import (
     write_pulse_schedule_timeline_image,
 )
 from .sampler import QubexSamplerV2
+from .simulation import (
+    FakeQubexExperiment,
+    build_qxsimulator_system,
+    filter_pulse_schedule_for_simulation,
+    materialize_pulse_schedule_for_simulation,
+)
 from .target import QUBEX_NATIVE_BASIS_GATES, build_qubex_target
 
 __all__ = [
@@ -36,15 +42,19 @@ __all__ = [
     "QubexProvider",
     "QubexSamplerV2",
     "QUBEX_NATIVE_BASIS_GATES",
+    "FakeQubexExperiment",
     "build_device_topology",
     "build_device_topology_figure",
     "build_device_topology_svg",
     "build_dynamical_decoupling_pass_manager",
     "build_pulse_schedule_timeline_figure",
+    "build_qxsimulator_system",
     "build_topology_aware_dynamical_decoupling_pass_manager",
     "build_qubex_target",
     "diff_pulse_schedules",
     "extract_pulse_timeline",
+    "filter_pulse_schedule_for_simulation",
+    "materialize_pulse_schedule_for_simulation",
     "label_to_qid",
     "qid_to_label",
     "summarize_pulse_schedule",

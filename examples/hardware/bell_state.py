@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and optionally run a Bell circuit on a Qubex 144Qv2 device."""
+"""Build and optionally run a Bell circuit on a Qubex hardware device."""
 
 from __future__ import annotations
 
@@ -19,9 +19,23 @@ from qiskit_qubex_provider import (
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_DEVICE_ID = "144Qv2"
-DEFAULT_QUBIT_LABELS = ("Q036", "Q037", "Q038", "Q039")
-DEFAULT_BELL_PAIR = ("Q036", "Q037")
+DEFAULT_DEVICE_ID = "64Qv3"
+DEFAULT_QUBIT_LABELS = (
+    "Q24",
+    "Q25",
+    "Q26",
+    "Q27",
+    "Q28",
+    "Q29",
+    "Q30",
+    "Q31",
+    "Q40",
+    "Q41",
+    "Q42",
+)
+DEFAULT_BELL_PAIR = ("Q28", "Q25")
+DEFAULT_4Q_WORKLOAD_LABELS = ("Q28", "Q25", "Q30", "Q31")
+DEFAULT_4Q_CHAIN_LABELS = ("Q25", "Q28", "Q30", "Q31")
 DEFAULT_SHOTS = 1000
 
 
@@ -43,6 +57,7 @@ def generate_device_topology(
     bell_pair: tuple[str, str],
     output_path: Path,
     pulse_source=None,
+    calibration_valid_days: int | None = None,
 ) -> Path:
     """Generate and write a Device Gateway topology for the selected qubits."""
     device_config = config_root / device_id
@@ -55,6 +70,7 @@ def generate_device_topology(
         coupling_fidelity_range=(0.0, 100.0),
         readout_fidelity_range=(0.0, 100.0),
         only_maximum_connected=False,
+        calibration_valid_days=calibration_valid_days,
     )
 
     qids = tuple(label_to_qid(label) for label in qubit_labels)
@@ -72,6 +88,7 @@ def generate_device_topology(
         qubit["id"] = logical_id_by_physical[physical_id]
         qubit["label"] = labels_by_id[physical_id]
         qubits.append(qubit)
+    qubits.sort(key=lambda qubit: int(qubit["id"]))
 
     couplings = []
     for coupling in full_topology["couplings"]:
@@ -335,7 +352,7 @@ def _pair(value: str) -> tuple[str, str]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Qubex 144Qv2 hardware Bell sample.")
+    parser = argparse.ArgumentParser(description="Qubex hardware Bell sample.")
     parser.add_argument("--device-id", default=DEFAULT_DEVICE_ID)
     parser.add_argument(
         "--config-root",
